@@ -20,6 +20,24 @@ export function normalizeStockInput(value) {
   return stock;
 }
 
+export function groupProductsByCategory(categories, products, query = '') {
+  const filtered = filterProducts(products, query);
+  const byCategory = new Map();
+  for (const product of filtered) {
+    const key = product.category.toLocaleLowerCase();
+    const group = byCategory.get(key);
+    if (group) group.push(product);
+    else byCategory.set(key, [product]);
+  }
+  return {
+    total: filtered.length,
+    groups: categories.map((category) => ({
+      category,
+      products: byCategory.get(category.name.toLocaleLowerCase()) ?? [],
+    })),
+  };
+}
+
 export function removeEmptyCategory(categories, products, categoryName) {
   if (products.some((product) => product.category.toLocaleLowerCase() === categoryName.toLocaleLowerCase())) {
     throw new Error('Kategori masih memiliki produk. Hapus atau pindahkan produk sebelum menghapus kategori.');
