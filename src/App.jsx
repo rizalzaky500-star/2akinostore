@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowDownToLine,
@@ -42,6 +42,7 @@ import {
 import {
   decrementProductStock,
   filterProducts,
+  groupProductsByCategory,
   normalizeStockInput,
   removeEmptyCategory,
 } from './lib/catalog.js';
@@ -160,6 +161,114 @@ function whatsappUrl(number, message) {
   return `https://wa.me/${cleanNumber}?text=${encodeURIComponent(message)}`;
 }
 
+const ProductCard = memo(function ProductCard({ product, index, onCheckout, qrisOpen }) {
+  const soldOut = product.stock === 0;
+  const orderable = !soldOut && qrisOpen;
+  return (
+    <article
+      className="group card-in magic-shimmer flex flex-col rounded-2xl border border-white/[0.08] bg-[#111114] p-5 transition duration-300 hover:-translate-y-1 hover:border-red-500/30 hover:shadow-glow"
+      style={{ animationDelay: `${Math.min(index * 45, 240)}ms` }}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04]">
+          {iconFor(product.icon, 21)}
+        </div>
+        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+          soldOut
+            ? 'border-red-500/20 bg-red-500/[0.08] text-red-300'
+            : 'border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300'
+        }`}>
+          {soldOut ? 'Habis' : product.stock == null ? 'Siap diproses' : `Stok: ${product.stock}`}
+        </span>
+      </div>
+      <div className="mt-5 flex-1">
+        <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-zinc-500">{product.category}</p>
+        <h3 className="mt-2 min-h-12 text-base font-semibold leading-snug text-zinc-100">{product.title}</h3>
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500">
+          <BadgeCheck size={14} className="text-emerald-400" />
+          {product.duration}
+        </p>
+      </div>
+      <div className="mt-5 flex items-end justify-between gap-3 border-t border-white/[0.07] pt-4">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider text-zinc-500">Mulai dari</p>
+          <p className="mt-1 text-lg font-bold tracking-tight text-white">{formatPrice(product.price)}</p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => onCheckout(product)}
+          className="shrink-0"
+          disabled={!orderable}
+          title={!qrisOpen && !soldOut ? STORE_CLOSED_MESSAGE : undefined}
+        >
+          {soldOut ? 'Habis' : !qrisOpen ? 'Tutup' : <>Beli <ArrowRight size={14} /></>}
+        </Button>
+      </div>
+    </article>
+  );
+});
+
+const HeroSection = memo(function HeroSection({ whatsappNumber }) {
+  return (
+    <section className="aurora magic-shimmer relative overflow-hidden rounded-[28px] border border-white/[0.09] px-6 py-10 shadow-glow sm:px-10 sm:py-14 lg:px-14">
+      <div className="absolute -right-12 -top-16 h-72 w-72 rounded-full bg-red-600/10 blur-3xl" />
+      <div className="relative max-w-3xl">
+        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-500/[0.08] px-3 py-1.5 text-[11px] font-semibold text-red-200">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
+          Akun digital pilihan, transaksi mudah
+        </div>
+        <h1 className="max-w-2xl text-4xl font-black leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-6xl">
+          Hiburan premium,
+          <span className="block bg-gradient-to-r from-red-400 via-rose-300 to-white bg-clip-text text-transparent">
+            lebih simpel.
+          </span>
+        </h1>
+        <p className="mt-5 max-w-xl text-sm leading-7 text-zinc-300 sm:text-base">
+          Temukan akun streaming dan aplikasi digital favoritmu. Pembayaran QRIS, dibantu admin melalui WhatsApp.
+        </p>
+        <div className="mt-7 flex flex-wrap gap-3">
+          <Button onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}>
+            Lihat katalog <ArrowRight size={16} />
+          </Button>
+          <a
+            href={whatsappUrl(whatsappNumber, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-5 text-sm font-semibold text-zinc-200 transition hover:bg-white/[0.07]"
+          >
+            <Headphones size={16} /> Hubungi admin
+          </a>
+        </div>
+        <div className="mt-9 flex flex-wrap gap-x-7 gap-y-3 border-t border-white/10 pt-5 text-xs text-zinc-400">
+          <span className="flex items-center gap-2"><ShieldCheck size={15} className="text-emerald-400" /> Pilihan terkurasi</span>
+          <span className="flex items-center gap-2"><WalletCards size={15} className="text-red-300" /> QRIS 07.00–20.00 WIB</span>
+          <span className="flex items-center gap-2"><Headphones size={15} className="text-violet-300" /> Bantuan via WhatsApp</span>
+        </div>
+      </div>
+    </section>
+  );
+});
+
+const SERVICE_HIGHLIGHTS = [
+  { icon: WalletCards, title: 'Pembayaran praktis', text: 'Selesaikan pembayaran melalui QRIS dari aplikasi pilihan Anda.' },
+  { icon: BadgeCheck, title: 'Detail jelas', text: 'Informasi paket, harga, durasi, dan garansi tersedia sebelum membeli.' },
+  { icon: Headphones, title: 'Dibantu admin', text: 'Konfirmasi pesanan dan kirim bukti pembayaran dengan mudah via WhatsApp.' },
+];
+
+const ServiceHighlights = memo(function ServiceHighlights() {
+  return (
+    <section className="grid gap-4 md:grid-cols-3">
+      {SERVICE_HIGHLIGHTS.map(({ icon: Icon, title, text }) => (
+        <div key={title} className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
+          <Icon size={19} className="text-red-300" />
+          <h3 className="mt-4 text-sm font-semibold text-white">{title}</h3>
+          <p className="mt-2 text-xs leading-5 text-zinc-500">{text}</p>
+        </div>
+      ))}
+    </section>
+  );
+});
+
 function SectionHeading({ eyebrow, title, description, action }) {
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -223,19 +332,43 @@ function App() {
     return () => window.clearInterval(interval);
   }, []);
 
+  // Persist each slice to localStorage, skipping the initial mount so unchanged
+  // data (already read from storage) is not written straight back on every load.
+  const persistedKeys = useRef(new Set());
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_CATS, JSON.stringify(categories));
+    if (persistedKeys.current.has(STORAGE_KEY_CATS)) {
+      localStorage.setItem(STORAGE_KEY_CATS, JSON.stringify(categories));
+    } else {
+      persistedKeys.current.add(STORAGE_KEY_CATS);
+    }
   }, [categories]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PRODS, JSON.stringify(products));
+    if (persistedKeys.current.has(STORAGE_KEY_PRODS)) {
+      localStorage.setItem(STORAGE_KEY_PRODS, JSON.stringify(products));
+    } else {
+      persistedKeys.current.add(STORAGE_KEY_PRODS);
+    }
   }, [products]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_TRANS, JSON.stringify(transactions));
+    if (persistedKeys.current.has(STORAGE_KEY_TRANS)) {
+      localStorage.setItem(STORAGE_KEY_TRANS, JSON.stringify(transactions));
+    } else {
+      persistedKeys.current.add(STORAGE_KEY_TRANS);
+    }
   }, [transactions]);
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+    if (persistedKeys.current.has(STORAGE_KEY_SETTINGS)) {
+      localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(settings));
+    } else {
+      persistedKeys.current.add(STORAGE_KEY_SETTINGS);
+    }
   }, [settings]);
   useEffect(() => {
+    // Decode the store's static QRIS image only when a checkout actually needs
+    // it. This keeps the (large) zxing decoder out of the initial load budget
+    // and stops it from competing with first paint.
+    if (!checkoutProduct || staticQrisPayload || qrisSourceError) return undefined;
+
     let cancelled = false;
     import('@zxing/browser')
       .then(({ BrowserQRCodeReader }) => new BrowserQRCodeReader().decodeFromImageUrl(qrisImage))
@@ -251,12 +384,27 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [checkoutProduct, staticQrisPayload, qrisSourceError]);
   useEffect(() => {
     if (!notice) return undefined;
     const timeout = window.setTimeout(() => setNotice(''), 3200);
     return () => window.clearTimeout(timeout);
   }, [notice]);
+
+  // Pause the decorative shimmer/aurora animations while the tab is hidden so
+  // they do not keep repainting in the background.
+  useEffect(() => {
+    const root = document.documentElement;
+    const sync = () => {
+      root.classList.toggle('animations-paused', document.hidden);
+    };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      root.classList.remove('animations-paused');
+    };
+  }, []);
 
   const visibleProducts = useMemo(() => {
     return filterProducts(products, catalogSearchQuery).filter(
@@ -283,6 +431,19 @@ function App() {
     [checkoutProduct, categories],
   );
 
+  const catalogCategories = useMemo(() => {
+    const byName = new Map(categories.map((category) => [category.name, category]));
+    return ['All', ...categories.map((category) => category.name)].map((name) => {
+      const category = byName.get(name);
+      return { name, icon: category?.icon };
+    });
+  }, [categories]);
+
+  const adminProductGroups = useMemo(
+    () => groupProductsByCategory(categories, products, productSearchQuery),
+    [categories, products, productSearchQuery],
+  );
+
   function openAdminAccess() {
     if (isAdminLoggedIn) setActiveTab('admin');
     else setLoginOpen(true);
@@ -307,7 +468,7 @@ function App() {
     setNotice('Anda telah keluar dari akses admin.');
   }
 
-  function startCheckout(product) {
+  const startCheckout = useCallback((product) => {
     if (!isQrisOpen(new Date())) {
       setNotice(STORE_CLOSED_MESSAGE);
       return;
@@ -318,7 +479,7 @@ function App() {
     setDynamicQrisPayload('');
     setCustomerName('');
     setCustomerWA('');
-  }
+  }, []);
 
   function processToQRIS(event) {
     event.preventDefault();
@@ -562,53 +723,6 @@ function App() {
     URL.revokeObjectURL(downloadUrl);
   }
 
-  function renderProductCard(product, index) {
-    return (
-      <motion.article
-        key={product.id}
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, delay: Math.min(index * 0.045, 0.24) }}
-        className="group magic-shimmer flex flex-col rounded-2xl border border-white/[0.08] bg-[#111114] p-5 transition duration-300 hover:-translate-y-1 hover:border-red-500/30 hover:shadow-glow"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/[0.08] bg-white/[0.04]">
-            {iconFor(product.icon, 21)}
-          </div>
-          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
-            product.stock === 0
-              ? 'border-red-500/20 bg-red-500/[0.08] text-red-300'
-              : 'border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300'
-          }`}>
-            {product.stock === 0 ? 'Habis' : product.stock == null ? 'Siap diproses' : `Stok: ${product.stock}`}
-          </span>
-        </div>
-        <div className="mt-5 flex-1">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-zinc-500">{product.category}</p>
-          <h3 className="mt-2 min-h-12 text-base font-semibold leading-snug text-zinc-100">{product.title}</h3>
-          <p className="mt-2 flex items-center gap-1.5 text-xs text-zinc-500">
-            <BadgeCheck size={14} className="text-emerald-400" />
-            {product.duration}
-          </p>
-        </div>
-        <div className="mt-5 flex items-end justify-between gap-3 border-t border-white/[0.07] pt-4">
-          <div>
-            <p className="text-[10px] uppercase tracking-wider text-zinc-500">Mulai dari</p>
-            <p className="mt-1 text-lg font-bold tracking-tight text-white">{formatPrice(product.price)}</p>
-          </div>
-          <Button
-            size="sm"
-            onClick={() => startCheckout(product)}
-            className="shrink-0"
-            disabled={product.stock === 0 || !qrisOpen}
-            title={!qrisOpen && product.stock !== 0 ? STORE_CLOSED_MESSAGE : undefined}
-          >
-            {product.stock === 0 ? 'Habis' : !qrisOpen ? 'Tutup' : <>Beli <ArrowRight size={14} /></>}
-          </Button>
-        </div>
-      </motion.article>
-    );
-  }
 
   const activeWhatsApp = settings.adminWA || defaultSettings.adminWA;
 
@@ -642,7 +756,9 @@ function App() {
                 key={id}
                 type="button"
                 onClick={() => setActiveTab(id)}
-                className={`${id === 'store' ? 'hidden sm:flex' : 'flex'} h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold transition max-[360px]:px-1 sm:px-3 ${
+                aria-label={label}
+                aria-current={activeTab === id ? 'page' : undefined}
+                className={`flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold transition max-[360px]:px-1 sm:px-3 ${
                   activeTab === id ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-200'
                 }`}
               >
@@ -653,6 +769,8 @@ function App() {
             <button
               type="button"
               onClick={openAdminAccess}
+              aria-label="Admin"
+              aria-current={activeTab === 'admin' ? 'page' : undefined}
               className={`flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold transition max-[360px]:px-1 sm:px-3 ${
                 activeTab === 'admin' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-200'
               }`}
@@ -667,42 +785,7 @@ function App() {
       <main className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 sm:pt-12">
         {activeTab === 'store' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-12">
-            <section className="aurora magic-shimmer relative overflow-hidden rounded-[28px] border border-white/[0.09] px-6 py-10 shadow-glow sm:px-10 sm:py-14 lg:px-14">
-              <div className="absolute -right-12 -top-16 h-72 w-72 rounded-full bg-red-600/10 blur-3xl" />
-              <div className="relative max-w-3xl">
-                <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-red-400/20 bg-red-500/[0.08] px-3 py-1.5 text-[11px] font-semibold text-red-200">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
-                  Akun digital pilihan, transaksi mudah
-                </div>
-                <h1 className="max-w-2xl text-4xl font-black leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-6xl">
-                  Hiburan premium,
-                  <span className="block bg-gradient-to-r from-red-400 via-rose-300 to-white bg-clip-text text-transparent">
-                    lebih simpel.
-                  </span>
-                </h1>
-                <p className="mt-5 max-w-xl text-sm leading-7 text-zinc-300 sm:text-base">
-                  Temukan akun streaming dan aplikasi digital favoritmu. Pembayaran QRIS, dibantu admin melalui WhatsApp.
-                </p>
-                <div className="mt-7 flex flex-wrap gap-3">
-                  <Button onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}>
-                    Lihat katalog <ArrowRight size={16} />
-                  </Button>
-                  <a
-                    href={whatsappUrl(activeWhatsApp, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-5 text-sm font-semibold text-zinc-200 transition hover:bg-white/[0.07]"
-                  >
-                    <Headphones size={16} /> Hubungi admin
-                  </a>
-                </div>
-                <div className="mt-9 flex flex-wrap gap-x-7 gap-y-3 border-t border-white/10 pt-5 text-xs text-zinc-400">
-                  <span className="flex items-center gap-2"><ShieldCheck size={15} className="text-emerald-400" /> Pilihan terkurasi</span>
-                  <span className="flex items-center gap-2"><WalletCards size={15} className="text-red-300" /> QRIS 07.00–20.00 WIB</span>
-                  <span className="flex items-center gap-2"><Headphones size={15} className="text-violet-300" /> Bantuan via WhatsApp</span>
-                </div>
-              </div>
-            </section>
+            <HeroSection whatsappNumber={activeWhatsApp} />
 
             <section id="catalog">
               <SectionHeading
@@ -748,8 +831,7 @@ function App() {
                 </div>
               </div>
               <div className="scrollbar-none mb-6 flex gap-2 overflow-x-auto pb-2" role="group" aria-label="Filter kategori produk">
-                {['All', ...categories.map((category) => category.name)].map((name) => {
-                  const category = categories.find((item) => item.name === name);
+                {catalogCategories.map(({ name, icon }) => {
                   const active = selectedCategory === name;
                   return (
                     <button
@@ -762,7 +844,7 @@ function App() {
                           : '!border-white/20 bg-white/[0.04] text-zinc-200 hover:!border-white/40 hover:bg-white/[0.08] hover:text-white'
                       }`}
                     >
-                      {name === 'All' ? <Package size={15} /> : iconFor(category?.icon, 15)}
+                      {name === 'All' ? <Package size={15} /> : iconFor(icon, 15)}
                       {name === 'All' ? 'Semua produk' : name}
                     </button>
                   );
@@ -770,7 +852,15 @@ function App() {
               </div>
               {visibleProducts.length ? (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                  {visibleProducts.map(renderProductCard)}
+                  {visibleProducts.map((product, index) => (
+                    <ProductCard
+                      key={product.id}
+                      product={product}
+                      index={index}
+                      onCheckout={startCheckout}
+                      qrisOpen={qrisOpen}
+                    />
+                  ))}
                 </div>
               ) : (
                 <div className="rounded-2xl border border-dashed border-white/10 py-16 text-center">
@@ -799,19 +889,7 @@ function App() {
               )}
             </section>
 
-            <section className="grid gap-4 md:grid-cols-3">
-              {[
-                { icon: WalletCards, title: 'Pembayaran praktis', text: 'Selesaikan pembayaran melalui QRIS dari aplikasi pilihan Anda.' },
-                { icon: BadgeCheck, title: 'Detail jelas', text: 'Informasi paket, harga, durasi, dan garansi tersedia sebelum membeli.' },
-                { icon: Headphones, title: 'Dibantu admin', text: 'Konfirmasi pesanan dan kirim bukti pembayaran dengan mudah via WhatsApp.' },
-              ].map(({ icon: Icon, title, text }) => (
-                <div key={title} className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-5">
-                  <Icon size={19} className="text-red-300" />
-                  <h3 className="mt-4 text-sm font-semibold text-white">{title}</h3>
-                  <p className="mt-2 text-xs leading-5 text-zinc-500">{text}</p>
-                </div>
-              ))}
-            </section>
+            <ServiceHighlights />
           </motion.div>
         )}
 
@@ -930,14 +1008,11 @@ function App() {
                   </div>
                   {productSearchQuery && (
                     <p className="mt-2 text-[11px] text-zinc-500">
-                      {filterProducts(products, productSearchQuery).length} produk ditemukan
+                      {adminProductGroups.total} produk ditemukan
                     </p>
                   )}
                 </div>
-                {categories.map((category) => {
-                  const categoryProducts = filterProducts(products, productSearchQuery).filter(
-                    (product) => product.category.toLowerCase() === category.name.toLowerCase(),
-                  );
+                {adminProductGroups.groups.map(({ category, products: categoryProducts }) => {
                   if (productSearchQuery.trim() && categoryProducts.length === 0) return null;
                   return (
                     <section key={category.name} className="rounded-2xl border border-white/[0.08] bg-[#111114] p-5">
@@ -1051,7 +1126,7 @@ function App() {
                     </section>
                   );
                 })}
-                {productSearchQuery.trim() && filterProducts(products, productSearchQuery).length === 0 && (
+                {productSearchQuery.trim() && adminProductGroups.total === 0 && (
                   <div className="rounded-2xl border border-dashed border-white/10 py-12 text-center">
                     <p className="text-sm font-semibold text-zinc-300">Produk tidak ditemukan</p>
                     <p className="mt-1 text-xs text-zinc-500">Coba kata kunci nama, kategori, atau durasi yang berbeda.</p>
@@ -1140,7 +1215,8 @@ function App() {
         target="_blank"
         rel="noreferrer"
         aria-label="Hubungi admin melalui WhatsApp"
-        className="fixed bottom-5 right-5 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-xl shadow-emerald-950/40 transition hover:scale-105 hover:bg-emerald-400"
+        className="fixed bottom-5 right-5 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-xl shadow-emerald-950/40 transition hover:scale-105 hover:bg-emerald-400 motion-safe:transition-transform"
+        style={{ bottom: 'calc(1.25rem + env(safe-area-inset-bottom))', right: 'calc(1.25rem + env(safe-area-inset-right))' }}
       >
         <Headphones size={20} />
       </a>
@@ -1361,7 +1437,7 @@ function App() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
             role="status"
-            className="fixed bottom-5 left-1/2 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-zinc-900 px-4 py-3 text-xs font-medium text-zinc-100 shadow-2xl"
+            className="fixed bottom-20 left-1/2 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-zinc-900 px-4 py-3 text-xs font-medium text-zinc-100 shadow-2xl sm:bottom-5"
           >
             <CheckCircle2 size={15} className="shrink-0 text-emerald-400" /> {notice}
           </motion.div>
