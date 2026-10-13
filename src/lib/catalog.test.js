@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   decrementProductStock,
   filterProducts,
+  groupProductsByCategory,
   normalizeStockInput,
   removeEmptyCategory,
 } from './catalog.js';
@@ -27,6 +28,24 @@ test('blank stock means unlimited and finite stock must be a non-negative intege
   assert.throws(() => normalizeStockInput('-1'), /bilangan bulat/);
   assert.throws(() => normalizeStockInput('1.5'), /bilangan bulat/);
   assert.throws(() => normalizeStockInput('abc'), /bilangan bulat/);
+});
+
+test('groups products by category in a single pass, respecting the search query', () => {
+  const categories = [{ name: 'Netflix' }, { name: 'WeTV' }, { name: 'Empty' }];
+
+  const unfiltered = groupProductsByCategory(categories, products, '');
+  assert.equal(unfiltered.total, 2);
+  assert.deepEqual(
+    unfiltered.groups.map(({ category, products: group }) => [category.name, group.length]),
+    [['Netflix', 1], ['WeTV', 1], ['Empty', 0]],
+  );
+
+  const filtered = groupProductsByCategory(categories, products, 'wetv');
+  assert.equal(filtered.total, 1);
+  assert.deepEqual(
+    filtered.groups.map(({ category, products: group }) => [category.name, group.map((item) => item.id)]),
+    [['Netflix', []], ['WeTV', ['two']], ['Empty', []]],
+  );
 });
 
 test('category deletion is blocked while products are assigned', () => {

@@ -110,3 +110,22 @@ manually verify receipt before marking the order paid. This static-site
 implementation has no acquirer API, server-side webhook, automatic payment
 status, or shared order database; do not treat browser-local verification as
 provider-confirmed settlement.
+
+## Performance notes
+
+The storefront keeps interactions smooth on desktop and mobile by staying
+browser-local and avoiding avoidable work:
+
+- The bundled static QRIS image is optimized to a fraction of its former size.
+  Keep `DANA.jpeg` scannable when it is replaced: the app reads its payload with
+  ZXing, so the QR must remain legible after any resize or recompression.
+- The QRIS payload is decoded only when a customer starts a checkout, not on
+  page load, so the ZXing decoder is not part of the initial render cost.
+- Catalog cards, the hero, and the service highlights are memoized so typing in
+  search or editing admin fields does not re-render unrelated markup.
+- Product cards fade in with a CSS animation instead of a JavaScript-driven
+  effect, and the decorative shimmer/aurora animations pause while the tab is
+  hidden.
+- Catalog and admin search group products in a single pass instead of rescanning
+  the catalog once per category.
+
