@@ -42,9 +42,43 @@ In **Daftar produk**:
   payment. Verification is blocked if the stock has reached zero.
 - Categories with products cannot be deleted. Remove those products first;
   deleting an empty category requires confirmation.
+- Add a **panduan pembelian** (purchase guide) for a whole category and for
+  individual products. See below.
 
 WeTV replaces the former YouTube catalog branding. Existing saved YouTube
 categories and products are migrated to WeTV when the app loads.
+
+## Panduan pembelian (purchase guide)
+
+Customers see a purchase guide in the checkout dialog, above the name and
+WhatsApp fields, before they continue to payment. Every category and every
+product has its own guide field in the admin dashboard, edited inline:
+
+- A **product guide** is typed in the product's card, under its stock field.
+- A **category guide** is typed at the top of that category's section and
+  applies to every product in the category that has no guide of its own.
+
+Resolution order is **product first, then category**:
+
+1. If the product has a guide, that text is shown.
+2. Otherwise the guide of the product's category is shown.
+3. If neither is set, the guide section is not rendered at all. Blank fields
+   are never replaced with sample or placeholder content.
+
+Guides are plain text. They are rendered as text nodes, so markup typed into a
+guide is displayed literally and cannot execute. Line breaks are preserved, and
+the panel wraps inside the dialog without horizontal scrolling on a 390px-wide
+phone.
+
+Saving a guide updates the checkout flow immediately with no redeploy, because
+guides are stored with the catalog in `localStorage` under the existing
+`2akinostore_cats_v12` and `2akinostore_products_v12` keys. Editing one
+product's or category's guide never changes another's. The resolution and
+update rules live in `src/lib/guides.js` and are covered by unit tests.
+
+Because storage is browser-local, guides set on one device are not shared with
+customers on other devices. Publishing a guide to every visitor, like the rest
+of the catalog, requires a backend.
 
 ## QRIS operating hours
 

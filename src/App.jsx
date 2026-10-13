@@ -4,6 +4,7 @@ import {
   ArrowDownToLine,
   ArrowRight,
   BadgeCheck,
+  BookOpen,
   Check,
   CheckCircle2,
   Clapperboard,
@@ -49,6 +50,11 @@ import {
   isQrisOpen,
   STORE_CLOSED_MESSAGE,
 } from './lib/operatingHours.js';
+import {
+  resolvePurchaseGuide,
+  setCategoryGuide,
+  setProductGuide,
+} from './lib/guides.js';
 
 const STORAGE_KEY_CATS = '2akinostore_cats_v12';
 const STORAGE_KEY_PRODS = '2akinostore_products_v12';
@@ -206,6 +212,8 @@ function App() {
   const [productSearchQuery, setProductSearchQuery] = useState('');
   const [catalogSearchQuery, setCatalogSearchQuery] = useState('');
   const [stockDrafts, setStockDrafts] = useState({});
+  const [guideDrafts, setGuideDrafts] = useState({});
+  const [categoryGuideDrafts, setCategoryGuideDrafts] = useState({});
   const [trackQuery, setTrackQuery] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(() => new Date());
@@ -269,6 +277,11 @@ function App() {
   }, [trackQuery, transactions]);
 
   const qrisOpen = isQrisOpen(now);
+
+  const checkoutGuide = useMemo(
+    () => resolvePurchaseGuide(checkoutProduct, categories),
+    [checkoutProduct, categories],
+  );
 
   function openAdminAccess() {
     if (isAdminLoggedIn) setActiveTab('admin');
@@ -460,6 +473,28 @@ function App() {
     setProducts((current) => current.map((item) => (item.id === productId ? { ...item, stock } : item)));
     setStockDrafts((current) => ({ ...current, [productId]: stock == null ? '' : String(stock) }));
     setNotice(stock == null ? 'Produk sekarang memiliki stok tak terbatas.' : `Stok diperbarui menjadi ${stock}.`);
+  }
+
+  function saveProductGuide(productId) {
+    const product = products.find((item) => item.id === productId);
+    if (!product) return;
+    const draft = guideDrafts[productId] ?? product.guide ?? '';
+    setProducts((current) => setProductGuide(current, productId, draft));
+    setGuideDrafts((current) => ({ ...current, [productId]: draft.trim() }));
+    setNotice(
+      draft.trim()
+        ? `Panduan pembelian untuk ${product.title} disimpan.`
+        : `Panduan ${product.title} dikosongkan; produk ini memakai panduan kategori bila ada.`,
+    );
+  }
+
+  function saveCategoryGuide(categoryName) {
+    const category = categories.find((item) => item.name === categoryName);
+    if (!category) return;
+    const draft = categoryGuideDrafts[categoryName] ?? category.guide ?? '';
+    setCategories((current) => setCategoryGuide(current, categoryName, draft));
+    setCategoryGuideDrafts((current) => ({ ...current, [categoryName]: draft.trim() }));
+    setNotice(`Panduan kategori ${categoryName} disimpan.`);
   }
 
   function deleteCategory(categoryName) {
@@ -920,6 +955,33 @@ function App() {
                           </Button>
                         </div>
                       </div>
+                      <div className="mb-4 rounded-xl border border-white/[0.06] bg-black/20 p-3">
+                        <label htmlFor={`category-guide-${category.name}`} className="flex items-center gap-2 text-[11px] font-semibold text-sky-200">
+                          <BookOpen size={13} aria-hidden="true" /> Panduan pembelian kategori ini
+                        </label>
+                        <p className="mt-1 text-[10px] leading-relaxed text-zinc-500">
+                          Dipakai untuk semua produk di kategori ini yang belum punya panduan sendiri.
+                        </p>
+                        <textarea
+                          id={`category-guide-${category.name}`}
+                          rows={2}
+                          className={`${inputClass} mt-2 min-h-16 resize-y py-2 leading-relaxed`}
+                          aria-label={`Panduan pembelian kategori ${category.name}`}
+                          placeholder="Contoh: Login memakai email sendiri, lalu kirim nama profil ke admin."
+                          value={categoryGuideDrafts[category.name] ?? category.guide ?? ''}
+                          onChange={(event) => setCategoryGuideDrafts((current) => ({ ...current, [category.name]: event.target.value }))}
+                        />
+                        <div className="mt-2 flex items-center justify-between gap-3">
+                          <span className="text-[10px] text-zinc-500">
+                            {(categoryGuideDrafts[category.name] ?? category.guide ?? '').trim()
+                              ? 'Panduan aktif untuk kategori ini.'
+                              : 'Kosong: panduan kategori tidak ditampilkan.'}
+                          </span>
+                          <Button size="sm" variant="secondary" className="h-8 shrink-0" onClick={() => saveCategoryGuide(category.name)}>
+                            Simpan panduan
+                          </Button>
+                        </div>
+                      </div>
                       {categoryProducts.length ? (
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                           {categoryProducts.map((product) => (
@@ -954,6 +1016,32 @@ function App() {
                                     onChange={(event) => setStockDrafts((current) => ({ ...current, [product.id]: event.target.value }))}
                                   />
                                   <Button size="sm" className="h-9 shrink-0" onClick={() => saveProductStock(product.id)}>Simpan</Button>
+                                </div>
+                              </div>
+                              <div className="mt-3 border-t border-white/[0.06] pt-3">
+                                <label htmlFor={`product-guide-${product.id}`} className="flex items-center gap-2 text-[11px] font-semibold text-sky-200">
+                                  <BookOpen size={13} aria-hidden="true" /> Panduan produk ini
+                                </label>
+                                <textarea
+                                  id={`product-guide-${product.id}`}
+                                  rows={2}
+                                  className={`${inputClass} mt-2 min-h-16 resize-y py-2 leading-relaxed`}
+                                  aria-label={`Panduan pembelian ${product.title}`}
+                                  placeholder="Kosongkan untuk memakai panduan kategori."
+                                  value={guideDrafts[product.id] ?? product.guide ?? ''}
+                                  onChange={(event) => setGuideDrafts((current) => ({ ...current, [product.id]: event.target.value }))}
+                                />
+                                <div className="mt-2 flex items-center justify-between gap-3">
+                                  <span className="text-[10px] text-zinc-500">
+                                    {(guideDrafts[product.id] ?? product.guide ?? '').trim()
+                                      ? 'Panduan produk ini aktif.'
+                                      : category.guide?.trim()
+                                        ? 'Kosong: memakai panduan kategori.'
+                                        : 'Kosong: tidak ada panduan.'}
+                                  </span>
+                                  <Button size="sm" variant="secondary" className="h-8 shrink-0" onClick={() => saveProductGuide(product.id)}>
+                                    Simpan panduan
+                                  </Button>
                                 </div>
                               </div>
                             </div>
@@ -1175,6 +1263,20 @@ function App() {
                   <p className="mt-1 text-xs text-zinc-500">{checkoutProduct.duration}</p>
                 </div>
               </div>
+              {checkoutGuide && (
+                <section
+                  aria-labelledby="checkout-guide-title"
+                  className="rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] p-4"
+                >
+                  <h3 id="checkout-guide-title" className="flex items-center gap-2 text-xs font-bold text-sky-200">
+                    <BookOpen size={15} className="shrink-0" aria-hidden="true" />
+                    Panduan pembelian
+                  </h3>
+                  <p className="mt-2 whitespace-pre-line break-words text-xs leading-relaxed text-sky-50">
+                    {checkoutGuide}
+                  </p>
+                </section>
+              )}
               <div>
                 <label htmlFor="customer-name" className="text-xs font-semibold text-zinc-300">Nama lengkap *</label>
                 <input id="customer-name" autoFocus required className={inputClass} value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Nama Anda" />
