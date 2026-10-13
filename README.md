@@ -110,3 +110,51 @@ manually verify receipt before marking the order paid. This static-site
 implementation has no acquirer API, server-side webhook, automatic payment
 status, or shared order database; do not treat browser-local verification as
 provider-confirmed settlement.
+
+## MongoDB (future data store)
+
+The app currently keeps everything in `localStorage`. MongoDB Atlas is being
+evaluated as the long-term store for catalog, guides and orders. No application
+code reads from it yet; the only integration today is a connectivity check.
+
+Credentials live in `.env` (gitignored). Copy `.env.example` and fill it in, or
+paste the values from the Atlas onboarding screen:
+
+```
+MONGODB_USERNAME="your_db_user"
+MONGODB_PASSWORD="your_db_password"
+MONGODB_URI="mongodb+srv://your_db_user:your_db_password@your-cluster.xxxxx.mongodb.net"
+```
+
+Run the check with:
+
+```sh
+npm run test:mongodb
+```
+
+It resolves the SRV/TXT records, connects, pings, lists databases, and performs
+a real insert / find / delete round-trip in a throwaway `2akinostore_check`
+database, which it drops afterwards. It is intentionally excluded from
+`npm test` and CI because it needs live credentials and network access.
+
+The script resolves the `mongodb+srv://` records itself through a public
+resolver (override with `MONGODB_DNS_SERVERS`). Many home routers answer the
+SRV query but drop the TXT query, and because the driver needs both, the
+connection hangs until it times out. Bypassing the router keeps the check
+reliable. `mongodb` is a `devDependency` so it is never bundled into the
+browser build.
+
+Access follows the same rules as any Atlas cluster:
+
+- The connecting machine's public IP must be in **Network Access → IP Access
+  List**. Otherwise Atlas accepts the TCP and TLS handshake and then closes the
+  socket without sending a MongoDB greeting, which the script reports as
+  `connection <monitor> ... closed`.
+- The database user must exist in **Database Access** and have read/write on
+  the target database.
+
+> **Security note:** credentials sit in a plaintext `.env` on the development
+> machine. `.env` is gitignored and has never been committed. Before this
+> project talks to MongoDB from a deployed environment, the password should be
+> rotated and supplied through the host's secret manager, and the cluster's IP
+> access list should name that host rather than a broad range.
