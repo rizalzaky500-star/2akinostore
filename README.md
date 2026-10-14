@@ -1,7 +1,8 @@
 # 2akinoStore
 
-React storefront for digital subscriptions and services. The catalog and admin
-settings are stored in the browser's `localStorage`.
+React storefront for digital subscriptions and services. Products and
+categories are served from MongoDB through server-side API routes. Transactions
+and non-secret store settings remain browser-local.
 
 ## Run locally
 
@@ -11,6 +12,18 @@ Requirements: Node.js 22 or newer and npm.
 npm ci
 npm run dev
 ```
+
+`npm run dev` starts the Vite frontend only. To use the MongoDB-backed catalog
+and admin APIs locally, configure the server-only variables in `.env.local`
+(see [MongoDB catalog and admin credentials](#mongodb-catalog-and-admin-credentials))
+and start the app with the Vercel development runtime:
+
+```sh
+npx vercel dev
+```
+
+This serves both the frontend and the `api/` serverless functions. Do not add
+MongoDB credentials or `ADMIN_SESSION_SECRET` to any `VITE_` variable.
 
 Run the unit tests and production build before pushing changes:
 
@@ -25,10 +38,10 @@ push workflow.
 
 ## Admin catalog guide
 
-Open **Admin** in the navigation and sign in. The current starter password is
-`0987654321`; change it in **Pengaturan** before using the site. Admin access,
-passwords, catalog data, and payment status are browser-local and are not
-server-side authentication or shared between devices.
+Open **Admin** in the navigation and sign in. The starter password is seeded
+on the server; change it in **Pengaturan** before using the site. Catalog CRUD
+is protected by server-validated admin sessions and changes are shared through
+MongoDB. Transactions and the store WhatsApp number are still browser-local.
 
 In **Daftar produk**:
 
@@ -45,8 +58,9 @@ In **Daftar produk**:
 - Add a **panduan pembelian** (purchase guide) for a whole category and for
   individual products. See below.
 
-WeTV replaces the former YouTube catalog branding. Existing saved YouTube
-categories and products are migrated to WeTV when the app loads.
+WeTV replaces the former YouTube catalog branding. Existing browser-saved
+YouTube categories and products are converted to WeTV during the explicit
+legacy catalog import.
 
 ## Panduan pembelian (purchase guide)
 
@@ -71,14 +85,12 @@ the panel wraps inside the dialog without horizontal scrolling on a 390px-wide
 phone.
 
 Saving a guide updates the checkout flow immediately with no redeploy, because
-guides are stored with the catalog in `localStorage` under the existing
-`2akinostore_cats_v12` and `2akinostore_products_v12` keys. Editing one
-product's or category's guide never changes another's. The resolution and
-update rules live in `src/lib/guides.js` and are covered by unit tests.
+guides are stored with their category or product in MongoDB. Editing one
+product's or category's guide never changes another's. The resolution rules
+live in `src/lib/guides.js` and are covered by unit tests.
 
-Because storage is browser-local, guides set on one device are not shared with
-customers on other devices. Publishing a guide to every visitor, like the rest
-of the catalog, requires a backend.
+Guides are served as part of the public MongoDB catalog, so they are shared
+with customers on every device.
 
 ## QRIS operating hours
 
@@ -111,19 +123,20 @@ implementation has no acquirer API, server-side webhook, automatic payment
 status, or shared order database; do not treat browser-local verification as
 provider-confirmed settlement.
 
-## MongoDB (admin credentials)
+## MongoDB catalog and admin credentials
 
-The catalog, guides, transactions and settings still live in `localStorage`.
-MongoDB Atlas now stores **one** thing: the admin credential. The password is
-kept as a salted scrypt hash in the `admin_credentials` collection of the
-`2akinostore` database, and the browser can no longer compare it locally.
+MongoDB Atlas stores categories, products, stock, and purchase guides alongside
+the admin credential. Catalog documents live in the `categories` and
+`products` collections; the admin password is a salted scrypt hash in
+`admin_credentials`. Only the Vercel API functions connect to the database.
+Transactions and the WhatsApp setting continue to use browser `localStorage`.
 
 Credentials live in `.env` / `.env.local` (both gitignored). Copy `.env.example`
 and fill it in, or paste the values from the Atlas onboarding screen:
 
 - `.env` is read by `scripts/test-mongodb.mjs`, which parses it itself.
-- `.env.local` is read by `npm run dev` (Vite) and by the API functions when you
-  run them locally.
+- `.env.local` is used by `npx vercel dev` to configure the API functions
+  locally. Plain `npm run dev` does not serve API routes.
 
 ```
 MONGODB_USERNAME="your_db_user"
@@ -131,7 +144,7 @@ MONGODB_PASSWORD="your_db_password"
 MONGODB_URI="mongodb+srv://your_db_user:your_db_password@your-cluster.xxxxx.mongodb.net"
 ```
 
-Run the check with:
+Run the connection check with:
 
 ```sh
 npm run test:mongodb
@@ -159,10 +172,33 @@ Access follows the same rules as any Atlas cluster:
   the target database.
 
 > **Security note:** credentials sit in a plaintext `.env` on the development
-> machine. `.env` is gitignored and has never been committed. Before this
-> project talks to MongoDB from a deployed environment, the password should be
-> rotated and supplied through the host's secret manager, and the cluster's IP
-> access list should name that host rather than a broad range.
+> machine. `.env` is gitignored. Rotate any credential that has been shared or
+> exposed, then supply the replacement only through the host's secret manager
+> and the local ignored environment file. Configure Atlas Network Access for
+> the deployment host rather than a broad range.
+
+### Catalog loading and legacy import
+
+The storefront fetches `GET /api/catalog` from MongoDB. It shows a loading
+state while the request is pending, a retryable error state if the API or
+database is unavailable, and an explicit empty-catalog state if no products
+have been added.
+
+When MongoDB returns an empty catalog, an authenticated admin can choose
+**Impor katalog lama** in the dashboard. The import reads this browser's
+existing `2akinostore_cats_v12` and `2akinostore_products_v12` data (or the
+starter catalog if no saved catalog exists), validates it on the server, and
+uses stable IDs with insert-only upserts. Repeating an interrupted import is
+safe; existing documents are not overwritten. The previous browser copies are
+left intact as a recovery source, but subsequent catalog changes are written
+only to MongoDB.
+
+Protected catalog APIs cover product and category creation, editing, and
+deletion, guide and stock updates, and atomic stock decrement during manual
+payment verification. The API validates all fields and rejects category
+deletion while products still reference it. Admin routes require the
+server-validated `HttpOnly` session cookie; database access never runs in the
+browser.
 
 ### Admin login
 
@@ -201,19 +237,19 @@ Because the browser never sees the hash or the connection string:
 
 ## Performance notes
 
-The storefront keeps interactions smooth on desktop and mobile by staying
-browser-local and avoiding avoidable work:
+The storefront keeps interactions smooth on desktop and mobile by avoiding
+avoidable work:
 
 - The bundled static QRIS image is optimized to a fraction of its former size.
   Keep `DANA.jpeg` scannable when it is replaced: the app reads its payload with
   ZXing, so the QR must remain legible after any resize or recompression.
 - The QRIS payload is decoded only when a customer starts a checkout, not on
   page load, so the ZXing decoder is not part of the initial render cost.
-- Catalog cards, the hero, and the service highlights are memoized so typing in
-  search or editing admin fields does not re-render unrelated markup.
+- The MongoDB catalog is fetched once on load. Catalog cards, the hero, and the
+  service highlights are memoized so typing in search or editing admin fields
+  does not re-render unrelated markup.
 - Product cards fade in with a CSS animation instead of a JavaScript-driven
   effect, and the decorative shimmer/aurora animations pause while the tab is
   hidden.
 - Catalog and admin search group products in a single pass instead of rescanning
   the catalog once per category.
-

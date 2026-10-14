@@ -17,6 +17,7 @@ import {
   MonitorPlay,
   Music2,
   Package,
+  Pencil,
   PenTool,
   Plus,
   QrCode,
@@ -40,11 +41,9 @@ import {
   DialogTitle,
 } from './components/ui/dialog.jsx';
 import {
-  decrementProductStock,
   filterProducts,
   groupProductsByCategory,
   normalizeStockInput,
-  removeEmptyCategory,
 } from './lib/catalog.js';
 import { createDynamicQris, validateQrisPayload } from './lib/qris.js';
 import {
@@ -53,9 +52,18 @@ import {
 } from './lib/operatingHours.js';
 import {
   resolvePurchaseGuide,
-  setCategoryGuide,
-  setProductGuide,
 } from './lib/guides.js';
+import {
+  consumeCatalogProductStock,
+  createCatalogCategory,
+  createCatalogProduct,
+  fetchCatalog,
+  migrateLegacyCatalog,
+  removeCatalogCategory,
+  removeCatalogProduct,
+  updateCatalogCategory,
+  updateCatalogProduct,
+} from './lib/catalogApi.js';
 import {
   changeAdminPassword,
   loginAdmin,
@@ -288,14 +296,17 @@ function SectionHeading({ eyebrow, title, description, action }) {
 }
 
 function App() {
-  const [initialCatalog] = useState(() =>
+  const [legacyCatalog] = useState(() =>
     migrateYouTubeBranding(
       readStorage(STORAGE_KEY_CATS, defaultCategories),
       readStorage(STORAGE_KEY_PRODS, defaultProducts),
     ),
   );
-  const [categories, setCategories] = useState(initialCatalog.categories);
-  const [products, setProducts] = useState(initialCatalog.products);
+  const [categories, setCategories] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState('');
+  const [catalogImporting, setCatalogImporting] = useState(false);
   const [transactions, setTransactions] = useState(() => readStorage(STORAGE_KEY_TRANS, []));
   const [settings, setSettings] = useState(() => readStorage(STORAGE_KEY_SETTINGS, defaultSettings));
   const [activeTab, setActiveTab] = useState('store');
@@ -305,6 +316,7 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [productOpen, setProductOpen] = useState(false);
+  const [editingProductId, setEditingProductId] = useState(null);
   const [checkoutProduct, setCheckoutProduct] = useState(null);
   const [checkoutStep, setCheckoutStep] = useState('form');
   const [invoice, setInvoice] = useState(null);
@@ -340,23 +352,31 @@ function App() {
     return () => window.clearInterval(interval);
   }, []);
 
-  // Persist each slice to localStorage, skipping the initial mount so unchanged
-  // data (already read from storage) is not written straight back on every load.
+  const loadCatalog = useCallback(async () => {
+    setCatalogLoading(true);
+    setCatalogError('');
+    try {
+      const catalog = await fetchCatalog();
+      if (!Array.isArray(catalog.categories) || !Array.isArray(catalog.products)) {
+        throw new Error('Format katalog dari server tidak valid.');
+      }
+      setCategories(catalog.categories);
+      setProducts(catalog.products);
+      return catalog;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Katalog tidak dapat dimuat.';
+      setCatalogError(message);
+      throw error;
+    } finally {
+      setCatalogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadCatalog().catch((error) => console.error('Gagal memuat katalog dari server.', error));
+  }, [loadCatalog]);
+
   const persistedKeys = useRef(new Set());
-  useEffect(() => {
-    if (persistedKeys.current.has(STORAGE_KEY_CATS)) {
-      localStorage.setItem(STORAGE_KEY_CATS, JSON.stringify(categories));
-    } else {
-      persistedKeys.current.add(STORAGE_KEY_CATS);
-    }
-  }, [categories]);
-  useEffect(() => {
-    if (persistedKeys.current.has(STORAGE_KEY_PRODS)) {
-      localStorage.setItem(STORAGE_KEY_PRODS, JSON.stringify(products));
-    } else {
-      persistedKeys.current.add(STORAGE_KEY_PRODS);
-    }
-  }, [products]);
   useEffect(() => {
     if (persistedKeys.current.has(STORAGE_KEY_TRANS)) {
       localStorage.setItem(STORAGE_KEY_TRANS, JSON.stringify(transactions));
@@ -575,49 +595,74 @@ function App() {
     setCheckoutStep('success');
   }
 
-  function verifyTransaction(invoiceCode) {
+  async function verifyTransaction(invoiceCode) {
     const transaction = transactions.find((item) => item.code === invoiceCode);
     if (!transaction || transaction.status === 'paid') return;
-    let productsAfterPayment;
-    try {
-      productsAfterPayment = decrementProductStock(products, transaction.productId);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Stok produk tidak mencukupi.');
+    const product = products.find((item) => item.id === transaction.productId);
+    if (!product) {
+      setNotice('Produk pada transaksi tidak ditemukan di katalog.');
+      return;
+    }
+    if (product.stock === 0) {
+      setNotice('Stok produk habis. Tambahkan stok sebelum memverifikasi pembayaran.');
       return;
     }
     const confirmed = window.confirm(
       `Pastikan pembayaran ${formatPrice(transaction.amount)} untuk invoice ${transaction.code} sudah diterima di akun QRIS merchant. Lanjutkan verifikasi manual?`,
     );
     if (!confirmed) return;
-    setProducts(productsAfterPayment);
-    setTransactions((current) =>
-      current.map((item) =>
-        item.code === invoiceCode
-          ? { ...item, status: 'paid', verifiedAt: new Date().toLocaleString('id-ID') }
-          : item,
-      ),
-    );
-    setNotice(`Invoice ${invoiceCode} ditandai terverifikasi oleh admin.`);
+    try {
+      const updatedProduct = await consumeCatalogProductStock(transaction.productId);
+      setProducts((current) => current.map((item) => (item.id === updatedProduct.id ? updatedProduct : item)));
+      setTransactions((current) =>
+        current.map((item) =>
+          item.code === invoiceCode
+            ? { ...item, status: 'paid', verifiedAt: new Date().toLocaleString('id-ID') }
+            : item,
+        ),
+      );
+      setNotice(`Invoice ${invoiceCode} ditandai terverifikasi oleh admin.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Verifikasi pembayaran gagal.');
+    }
   }
 
-  function addCategory(event) {
+  async function importLegacyCatalog() {
+    if (categories.length || products.length || catalogImporting) return;
+    setCatalogImporting(true);
+    try {
+      const result = await migrateLegacyCatalog(legacyCatalog.categories, legacyCatalog.products);
+      await loadCatalog();
+      setNotice(
+        `Katalog berhasil diimpor: ${result.importedCategories} kategori dan ${result.importedProducts} produk baru.`,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Impor katalog gagal.');
+    } finally {
+      setCatalogImporting(false);
+    }
+  }
+
+  async function addCategory(event) {
     event.preventDefault();
     const cleanName = categoryName.trim();
     if (!cleanName) {
       setNotice('Nama kategori tidak boleh kosong.');
       return;
     }
-    if (categories.some((category) => category.name.toLowerCase() === cleanName.toLowerCase())) {
-      setNotice('Kategori tersebut sudah ada.');
-      return;
+    try {
+      const category = await createCatalogCategory({ name: cleanName, icon: categoryIcon, color: 'text-amber-300' });
+      setCategories((current) => [...current, category]);
+      setCategoryName('');
+      setCategoryOpen(false);
+      setNotice(`Kategori ${cleanName} berhasil ditambahkan.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Kategori tidak dapat ditambahkan.');
     }
-    setCategories((current) => [...current, { name: cleanName, icon: categoryIcon, color: 'text-amber-300' }]);
-    setCategoryName('');
-    setCategoryOpen(false);
-    setNotice(`Kategori ${cleanName} berhasil ditambahkan.`);
   }
 
   function openAddProduct() {
+    setEditingProductId(null);
     setProductCategory(categories[0]?.name || '');
     setProductTitle('');
     setProductPrice('');
@@ -626,10 +671,20 @@ function App() {
     setProductOpen(true);
   }
 
-  function addProduct(event) {
+  function openEditProduct(product) {
+    setEditingProductId(product.id);
+    setProductCategory(product.category);
+    setProductTitle(product.title);
+    setProductPrice(String(product.price));
+    setProductDuration(product.duration);
+    setProductStock(product.stock == null ? '' : String(product.stock));
+    setProductOpen(true);
+  }
+
+  async function addProduct(event) {
     event.preventDefault();
     const price = Number(productPrice);
-    if (!productTitle.trim() || !Number.isFinite(price) || price <= 0 || !productDuration.trim() || !productCategory) {
+    if (!productTitle.trim() || !Number.isSafeInteger(price) || price <= 0 || !productDuration.trim() || !productCategory) {
       setNotice('Mohon isi semua data produk dengan benar.');
       return;
     }
@@ -641,29 +696,50 @@ function App() {
       return;
     }
     const category = categories.find((item) => item.name === productCategory);
-    setProducts((current) => [
-      ...current,
-      {
-        id: `p_${Date.now()}`,
+    try {
+      if (editingProductId) {
+        const updated = await updateCatalogProduct(editingProductId, {
+          category: productCategory,
+          title: productTitle.trim(),
+          price,
+          duration: productDuration.trim(),
+          stock,
+          icon: category?.icon || 'tv',
+        });
+        setProducts((current) => current.map((item) => (item.id === editingProductId ? updated : item)));
+        setProductOpen(false);
+        setEditingProductId(null);
+        setNotice(`Produk ${productTitle.trim()} berhasil diperbarui.`);
+        return;
+      }
+      const product = await createCatalogProduct({
         category: productCategory,
         title: productTitle.trim(),
         price,
         duration: productDuration.trim(),
         stock,
         icon: category?.icon || 'tv',
-      },
-    ]);
-    setProductOpen(false);
-    setNotice(`Produk ${productTitle.trim()} berhasil ditambahkan.`);
+      });
+      setProducts((current) => [...current, product]);
+      setProductOpen(false);
+      setNotice(`Produk ${productTitle.trim()} berhasil ditambahkan.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Produk tidak dapat ditambahkan.');
+    }
   }
 
-  function deleteProduct(productId) {
+  async function deleteProduct(productId) {
     if (!window.confirm('Apakah Anda yakin ingin menghapus produk ini?')) return;
-    setProducts((current) => current.filter((product) => product.id !== productId));
-    setNotice('Produk berhasil dihapus.');
+    try {
+      await removeCatalogProduct(productId);
+      setProducts((current) => current.filter((product) => product.id !== productId));
+      setNotice('Produk berhasil dihapus.');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Produk tidak dapat dihapus.');
+    }
   }
 
-  function saveProductStock(productId) {
+  async function saveProductStock(productId) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
 
@@ -674,34 +750,49 @@ function App() {
       setNotice(error instanceof Error ? error.message : 'Stok produk tidak valid.');
       return;
     }
-    setProducts((current) => current.map((item) => (item.id === productId ? { ...item, stock } : item)));
-    setStockDrafts((current) => ({ ...current, [productId]: stock == null ? '' : String(stock) }));
-    setNotice(stock == null ? 'Produk sekarang memiliki stok tak terbatas.' : `Stok diperbarui menjadi ${stock}.`);
+    try {
+      const updated = await updateCatalogProduct(productId, { stock });
+      setProducts((current) => current.map((item) => (item.id === productId ? updated : item)));
+      setStockDrafts((current) => ({ ...current, [productId]: stock == null ? '' : String(stock) }));
+      setNotice(stock == null ? 'Produk sekarang memiliki stok tak terbatas.' : `Stok diperbarui menjadi ${stock}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Stok produk tidak dapat disimpan.');
+    }
   }
 
-  function saveProductGuide(productId) {
+  async function saveProductGuide(productId) {
     const product = products.find((item) => item.id === productId);
     if (!product) return;
     const draft = guideDrafts[productId] ?? product.guide ?? '';
-    setProducts((current) => setProductGuide(current, productId, draft));
-    setGuideDrafts((current) => ({ ...current, [productId]: draft.trim() }));
-    setNotice(
-      draft.trim()
-        ? `Panduan pembelian untuk ${product.title} disimpan.`
-        : `Panduan ${product.title} dikosongkan; produk ini memakai panduan kategori bila ada.`,
-    );
+    try {
+      const updated = await updateCatalogProduct(productId, { guide: draft.trim() });
+      setProducts((current) => current.map((item) => (item.id === productId ? updated : item)));
+      setGuideDrafts((current) => ({ ...current, [productId]: draft.trim() }));
+      setNotice(
+        draft.trim()
+          ? `Panduan pembelian untuk ${product.title} disimpan.`
+          : `Panduan ${product.title} dikosongkan; produk ini memakai panduan kategori bila ada.`,
+      );
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Panduan produk tidak dapat disimpan.');
+    }
   }
 
-  function saveCategoryGuide(categoryName) {
+  async function saveCategoryGuide(categoryName) {
     const category = categories.find((item) => item.name === categoryName);
     if (!category) return;
     const draft = categoryGuideDrafts[categoryName] ?? category.guide ?? '';
-    setCategories((current) => setCategoryGuide(current, categoryName, draft));
-    setCategoryGuideDrafts((current) => ({ ...current, [categoryName]: draft.trim() }));
-    setNotice(`Panduan kategori ${categoryName} disimpan.`);
+    try {
+      const updated = await updateCatalogCategory(categoryName, { guide: draft.trim() });
+      setCategories((current) => current.map((item) => (item.name === categoryName ? updated : item)));
+      setCategoryGuideDrafts((current) => ({ ...current, [categoryName]: draft.trim() }));
+      setNotice(`Panduan kategori ${categoryName} disimpan.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Panduan kategori tidak dapat disimpan.');
+    }
   }
 
-  function deleteCategory(categoryName) {
+  async function deleteCategory(categoryName) {
     const linkedProductCount = products.filter(
       (product) => product.category.toLocaleLowerCase() === categoryName.toLocaleLowerCase(),
     ).length;
@@ -712,7 +803,8 @@ function App() {
     if (!window.confirm(`Hapus kategori "${categoryName}"? Tindakan ini tidak dapat dibatalkan.`)) return;
 
     try {
-      setCategories(removeEmptyCategory(categories, products, categoryName));
+      await removeCatalogCategory(categoryName);
+      setCategories((current) => current.filter((category) => category.name !== categoryName));
       setNotice(`Kategori ${categoryName} berhasil dihapus.`);
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Kategori tidak dapat dihapus.');
@@ -872,10 +964,30 @@ function App() {
                 description="Jelajahi paket digital pilihan dan temukan yang paling sesuai."
                 action={
                   <span className="text-xs text-zinc-500" aria-live="polite">
-                    {visibleProducts.length} produk ditemukan
+                    {catalogLoading
+                      ? 'Memuat katalog...'
+                      : catalogError
+                        ? 'Katalog tidak tersedia'
+                        : `${visibleProducts.length} produk ditemukan`}
                   </span>
                 }
               />
+              {catalogLoading && (
+                <div role="status" className="rounded-2xl border border-white/[0.08] bg-[#111114] py-16 text-center text-sm text-zinc-400">
+                  Memuat katalog produk...
+                </div>
+              )}
+              {catalogError && (
+                <div role="alert" className="flex flex-col items-center gap-3 rounded-2xl border border-red-500/20 bg-red-500/[0.05] p-6 text-center">
+                  <p className="text-sm font-semibold text-red-200">Katalog tidak dapat dimuat</p>
+                  <p className="text-xs text-zinc-400">{catalogError}</p>
+                  <Button variant="secondary" size="sm" onClick={() => loadCatalog().catch((error) => console.error('Gagal memuat katalog dari server.', error))}>
+                    Coba lagi
+                  </Button>
+                </div>
+              )}
+              {!catalogLoading && !catalogError && (
+                <>
               {!qrisOpen && (
                 <div
                   role="status"
@@ -943,12 +1055,18 @@ function App() {
               ) : (
                 <div className="rounded-2xl border border-dashed border-white/10 py-16 text-center">
                   <p className="text-sm font-semibold text-zinc-300">
-                    {catalogSearchQuery.trim() ? 'Produk tidak ditemukan' : 'Belum ada produk pada kategori ini'}
+                    {catalogSearchQuery.trim()
+                      ? 'Produk tidak ditemukan'
+                      : categories.length === 0 && products.length === 0
+                        ? 'Katalog belum memiliki produk'
+                        : 'Belum ada produk pada kategori ini'}
                   </p>
                   <p className="mt-1 text-xs text-zinc-500">
                     {catalogSearchQuery.trim()
                       ? 'Coba kata kunci lain atau ubah filter kategori.'
-                      : 'Pilih kategori lain untuk melihat produk yang tersedia.'}
+                      : categories.length === 0 && products.length === 0
+                        ? 'Admin dapat masuk ke dashboard untuk mengimpor data katalog lama.'
+                        : 'Pilih kategori lain untuk melihat produk yang tersedia.'}
                   </p>
                   {(catalogSearchQuery.trim() || selectedCategory !== 'All') && (
                     <Button
@@ -964,6 +1082,8 @@ function App() {
                     </Button>
                   )}
                 </div>
+              )}
+                </>
               )}
             </section>
 
@@ -1049,6 +1169,20 @@ function App() {
                 <Button variant="ghost" size="sm" onClick={logoutAdmin}>Keluar</Button>
               </div>
             </div>
+
+            {!catalogLoading && !catalogError && categories.length === 0 && products.length === 0 && (
+              <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-sky-500/20 bg-sky-500/[0.05] p-5 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-semibold text-sky-100">Katalog MongoDB masih kosong</p>
+                  <p className="mt-1 text-xs leading-relaxed text-zinc-400">
+                    Impor kategori dan produk yang tersimpan di browser ini. Data yang sudah ada tidak akan ditimpa.
+                  </p>
+                </div>
+                <Button size="sm" onClick={importLegacyCatalog} disabled={catalogImporting}>
+                  {catalogImporting ? 'Mengimpor...' : 'Impor katalog lama'}
+                </Button>
+              </div>
+            )}
 
             <div className="mb-6 flex gap-1 overflow-x-auto border-b border-white/[0.07]">
               {[
@@ -1145,9 +1279,14 @@ function App() {
                                   <p className="mt-1 text-[11px] text-zinc-500">{product.duration}</p>
                                   <p className="mt-3 text-sm font-bold text-red-300">{formatPrice(product.price)}</p>
                                 </div>
-                                <Button variant="danger" size="icon" className="h-8 w-8 shrink-0" onClick={() => deleteProduct(product.id)} aria-label={`Hapus ${product.title}`}>
-                                  <Trash2 size={14} />
-                                </Button>
+                                <div className="flex shrink-0 gap-1">
+                                  <Button variant="secondary" size="icon" className="h-8 w-8" onClick={() => openEditProduct(product)} aria-label={`Edit ${product.title}`}>
+                                    <Pencil size={14} />
+                                  </Button>
+                                  <Button variant="danger" size="icon" className="h-8 w-8" onClick={() => deleteProduct(product.id)} aria-label={`Hapus ${product.title}`}>
+                                    <Trash2 size={14} />
+                                  </Button>
+                                </div>
                               </div>
                               <div className="mt-4 border-t border-white/[0.06] pt-3">
                                 <label htmlFor={`product-stock-${product.id}`} className="flex items-center justify-between gap-2 text-[11px] font-semibold text-zinc-400">
@@ -1376,8 +1515,10 @@ function App() {
       <Dialog open={productOpen} onOpenChange={setProductOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Tambah produk</DialogTitle>
-            <DialogDescription>Masukkan informasi paket baru untuk katalog.</DialogDescription>
+            <DialogTitle>{editingProductId ? 'Edit produk' : 'Tambah produk'}</DialogTitle>
+            <DialogDescription>
+              {editingProductId ? 'Perbarui informasi paket katalog.' : 'Masukkan informasi paket baru untuk katalog.'}
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={addProduct} className="space-y-3">
             <div>
@@ -1414,7 +1555,10 @@ function App() {
               />
               <p className="mt-1 text-[10px] text-zinc-500">Masukkan bilangan bulat nol atau lebih. Kosongkan untuk stok tak terbatas.</p>
             </div>
-            <Button className="mt-2 w-full" type="submit"><Plus size={16} /> Simpan produk</Button>
+            <Button className="mt-2 w-full" type="submit">
+              {editingProductId ? <Pencil size={16} /> : <Plus size={16} />}
+              {editingProductId ? 'Simpan perubahan' : 'Simpan produk'}
+            </Button>
           </form>
         </DialogContent>
       </Dialog>
