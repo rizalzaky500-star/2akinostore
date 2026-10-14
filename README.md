@@ -43,6 +43,11 @@ on the server; change it in **Pengaturan** before using the site. Catalog CRUD
 is protected by server-validated admin sessions and changes are shared through
 MongoDB. Transactions and the store WhatsApp number are still browser-local.
 
+In the **Transaksi** tab, admins can download the CSV report or clear all
+transactions saved in the current browser. Clearing requires an explicit
+confirmation and does not affect transaction data in other browsers or
+devices; transaction history is not stored in MongoDB.
+
 In **Daftar produk**:
 
 - Search products by name, category, or duration.

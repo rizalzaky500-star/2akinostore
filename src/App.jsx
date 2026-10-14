@@ -316,6 +316,8 @@ function App() {
   const [loginOpen, setLoginOpen] = useState(false);
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [productOpen, setProductOpen] = useState(false);
+  const [clearTransactionsOpen, setClearTransactionsOpen] = useState(false);
+  const [clearingTransactions, setClearingTransactions] = useState(false);
   const [editingProductId, setEditingProductId] = useState(null);
   const [checkoutProduct, setCheckoutProduct] = useState(null);
   const [checkoutStep, setCheckoutStep] = useState('form');
@@ -893,6 +895,22 @@ function App() {
     URL.revokeObjectURL(downloadUrl);
   }
 
+  function clearAllTransactions() {
+    if (clearingTransactions) return;
+    setClearingTransactions(true);
+    try {
+      localStorage.setItem(STORAGE_KEY_TRANS, JSON.stringify([]));
+      setTransactions([]);
+      setClearTransactionsOpen(false);
+      setNotice('Seluruh riwayat transaksi berhasil dihapus.');
+    } catch (error) {
+      console.error('Gagal menghapus seluruh riwayat transaksi.', error);
+      setNotice('Riwayat transaksi gagal dihapus. Data belum diubah.');
+    } finally {
+      setClearingTransactions(false);
+    }
+  }
+
 
   const activeWhatsApp = settings.adminWA || defaultSettings.adminWA;
 
@@ -1359,7 +1377,16 @@ function App() {
                     <h2 className="text-sm font-semibold text-white">Riwayat transaksi</h2>
                     <p className="mt-1 text-xs text-zinc-500">{transactions.length} transaksi tercatat</p>
                   </div>
-                  <Button variant="secondary" size="sm" onClick={downloadTransactions}><ArrowDownToLine size={15} /> Unduh CSV</Button>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" onClick={downloadTransactions}>
+                      <ArrowDownToLine size={15} /> Unduh CSV
+                    </Button>
+                    {transactions.length > 0 && (
+                      <Button variant="danger" size="sm" onClick={() => setClearTransactionsOpen(true)}>
+                        <Trash2 size={15} /> Hapus Semua Transaksi
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 {transactions.length ? (
                   <div className="overflow-x-auto">
@@ -1560,6 +1587,38 @@ function App() {
               {editingProductId ? 'Simpan perubahan' : 'Simpan produk'}
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={clearTransactionsOpen}
+        onOpenChange={(open) => !clearingTransactions && setClearTransactionsOpen(open)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hapus semua transaksi?</DialogTitle>
+            <DialogDescription>
+              Tindakan ini akan menghapus seluruh {transactions.length} riwayat transaksi dari penyimpanan browser
+              ini dan tidak dapat dibatalkan.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="secondary"
+              onClick={() => setClearTransactionsOpen(false)}
+              disabled={clearingTransactions}
+            >
+              Batal
+            </Button>
+            <Button
+              variant="danger"
+              onClick={clearAllTransactions}
+              disabled={clearingTransactions}
+            >
+              <Trash2 size={15} />
+              {clearingTransactions ? 'Menghapus...' : 'Ya, Hapus Semua'}
+            </Button>
+          </div>
         </DialogContent>
       </Dialog>
 
