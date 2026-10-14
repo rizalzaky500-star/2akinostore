@@ -88,7 +88,14 @@ try {
   console.log('   hosts:',
     uri.replace(/\/\/[^@]*@/, '//').split('?')[0].split('/').slice(0, 3).join('/'));
 
-  client = new MongoClient(uri, { serverSelectionTimeoutMS: 15000 });
+  client = new MongoClient(uri, {
+    serverSelectionTimeoutMS: 15000,
+    // Atlas shard hosts (M0) negotiate TLS on the first handshake. Without an
+    // explicit tls:true the mongodb@7 driver closes the socket and reports a
+    // misleading "connection <monitor> ... closed", which looks like a
+    // whitelist problem but is not.
+    tls: true,
+  });
   await client.connect();
   console.log('2. connect           OK');
 

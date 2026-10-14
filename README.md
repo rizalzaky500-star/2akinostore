@@ -111,14 +111,19 @@ implementation has no acquirer API, server-side webhook, automatic payment
 status, or shared order database; do not treat browser-local verification as
 provider-confirmed settlement.
 
-## MongoDB (future data store)
+## MongoDB (admin credentials)
 
-The app currently keeps everything in `localStorage`. MongoDB Atlas is being
-evaluated as the long-term store for catalog, guides and orders. No application
-code reads from it yet; the only integration today is a connectivity check.
+The catalog, guides, transactions and settings still live in `localStorage`.
+MongoDB Atlas now stores **one** thing: the admin credential. The password is
+kept as a salted scrypt hash in the `admin_credentials` collection of the
+`2akinostore` database, and the browser can no longer compare it locally.
 
-Credentials live in `.env` (gitignored). Copy `.env.example` and fill it in, or
-paste the values from the Atlas onboarding screen:
+Credentials live in `.env` / `.env.local` (both gitignored). Copy `.env.example`
+and fill it in, or paste the values from the Atlas onboarding screen:
+
+- `.env` is read by `scripts/test-mongodb.mjs`, which parses it itself.
+- `.env.local` is read by `npm run dev` (Vite) and by the API functions when you
+  run them locally.
 
 ```
 MONGODB_USERNAME="your_db_user"
@@ -158,6 +163,41 @@ Access follows the same rules as any Atlas cluster:
 > project talks to MongoDB from a deployed environment, the password should be
 > rotated and supplied through the host's secret manager, and the cluster's IP
 > access list should name that host rather than a broad range.
+
+### Admin login
+
+The admin password is verified **on the server**, never in the browser:
+
+1. `POST /api/admin/login` (Vercel Function) reads the credential document and
+   compares the submitted password against the scrypt hash.
+2. On success it sets an `HttpOnly`, `SameSite=Strict` session cookie signed
+   with `ADMIN_SESSION_SECRET`.
+3. `POST /api/admin/password` rotates the password. It requires a valid
+   session **and** the current password, and it rewrites the hash in MongoDB —
+   which is why a change now applies on every device instead of only the
+   browser that submitted the form. The cookie embeds a fingerprint of the
+   current hash, so rotating the password invalidates every other session.
+4. `POST /api/admin/logout` expires the cookie.
+
+The default password, seeded on first login, is `2akinostore`. Change it from
+**Pengaturan** right away; the login endpoint reports `mustChangePassword`
+until you do.
+
+Because the browser never sees the hash or the connection string:
+
+- `MONGODB_URI` and `ADMIN_SESSION_SECRET` are **server-only** environment
+  variables. Never prefix them with `VITE_`, or Vite inlines them into the
+  client bundle and publishes your database credentials.
+- The client falls back to the legacy `localStorage` password only when the API
+  is unreachable, so a rollout or an outage cannot lock the owner out. That
+  fallback is browser-local and is not a security boundary.
+- `api/` is excluded from `src/**/*.test.js`; its endpoints are exercised
+  against a live cluster rather than in CI.
+
+> **Migration note:** until the fallback is removed, the old browser-local
+> password still grants access while the API is offline. Delete the `adminPass`
+> entry from `2akinostore_settings_v12` once every device has signed in through
+> the API at least once.
 
 ## Performance notes
 

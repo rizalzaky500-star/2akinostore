@@ -56,6 +56,11 @@ import {
   setCategoryGuide,
   setProductGuide,
 } from './lib/guides.js';
+import {
+  changeAdminPassword,
+  loginAdmin,
+  logoutAdmin as logoutAdminRequest,
+} from './lib/adminAuth.js';
 
 const STORAGE_KEY_CATS = '2akinostore_cats_v12';
 const STORAGE_KEY_PRODS = '2akinostore_products_v12';
@@ -309,7 +314,10 @@ function App() {
   const [customerName, setCustomerName] = useState('');
   const [customerWA, setCustomerWA] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [adminLoginPending, setAdminLoginPending] = useState(false);
   const [newPassword, setNewPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [settingsSaving, setSettingsSaving] = useState(false);
   const [adminWANumber, setAdminWANumber] = useState(settings.adminWA || defaultSettings.adminWA);
   const [categoryName, setCategoryName] = useState('');
   const [categoryIcon, setCategoryIcon] = useState('tv');
@@ -449,20 +457,55 @@ function App() {
     else setLoginOpen(true);
   }
 
-  function handleAdminLogin(event) {
+  /**
+   * Verifies the password against the server first. When the API cannot be
+   * reached (not deployed yet, offline, or the database is down), it falls
+   * back to the legacy localStorage password so the owner is never locked out
+   * during the transition. The server path is the source of truth.
+   */
+  async function handleAdminLogin(event) {
     event.preventDefault();
-    if (adminPassword.trim() !== (settings.adminPass || defaultSettings.adminPass)) {
-      setNotice('Password admin salah.');
-      return;
+    const attempt = adminPassword.trim();
+    setAdminLoginPending(true);
+
+    try {
+      const result = await loginAdmin(attempt);
+
+      if (result.outcome === 'ok') {
+        grantAdminAccess(result.mustChangePassword);
+        return;
+      }
+
+      if (result.outcome === 'unreachable') {
+        const legacy = settings.adminPass || defaultSettings.adminPass;
+        if (attempt === legacy) {
+          grantAdminAccess(false, ' (mode lokal)');
+          return;
+        }
+        setNotice('Password admin salah.');
+        return;
+      }
+
+      setNotice(result.message || 'Password admin salah.');
+    } finally {
+      setAdminLoginPending(false);
     }
+  }
+
+  function grantAdminAccess(mustChange, suffix = '') {
     setIsAdminLoggedIn(true);
     setAdminPassword('');
     setLoginOpen(false);
     setActiveTab('admin');
-    setNotice('Berhasil masuk ke dashboard admin.');
+    setNotice(
+      mustChange
+        ? 'Berhasil masuk. Password masih default — segera ganti di Pengaturan.'
+        : `Berhasil masuk ke dashboard admin.${suffix}`,
+    );
   }
 
-  function logoutAdmin() {
+  async function logoutAdmin() {
+    await logoutAdminRequest();
     setIsAdminLoggedIn(false);
     setActiveTab('store');
     setNotice('Anda telah keluar dari akses admin.');
@@ -676,20 +719,55 @@ function App() {
     }
   }
 
-  function saveAdminSettings(event) {
+  /**
+   * Saves the admin settings. The WhatsApp number stays browser-local, but a
+   * new password is written to MongoDB through the server, so the change
+   * applies on every device instead of only the current browser. The local
+   * copy is kept as the offline fallback used by handleAdminLogin.
+   */
+  async function saveAdminSettings(event) {
     event.preventDefault();
     const cleanNumber = adminWANumber.trim();
     if (!cleanNumber) {
       setNotice('Nomor WhatsApp admin tidak boleh kosong.');
       return;
     }
+
+    const nextPassword = newPassword.trim();
+    if (nextPassword) {
+      if (!currentPassword.trim()) {
+        setNotice('Masukkan password admin saat ini untuk mengubahnya.');
+        return;
+      }
+      setSettingsSaving(true);
+      try {
+        const result = await changeAdminPassword(currentPassword.trim(), nextPassword);
+
+        if (result.outcome === 'invalid' || result.outcome === 'error') {
+          setNotice(result.message);
+          return;
+        }
+        if (result.outcome === 'unreachable') {
+          // Offline: keep the old behaviour rather than silently dropping the
+          // change, and be explicit that it is browser-local only.
+          setNotice('Server tidak terjangkau. Password hanya diubah di browser ini.');
+        } else {
+          setNotice('Password admin tersimpan di database.');
+        }
+      } finally {
+        setSettingsSaving(false);
+      }
+    } else {
+      setNotice('Pengaturan admin berhasil disimpan.');
+    }
+
     setSettings((current) => ({
       ...current,
       adminWA: cleanNumber,
-      ...(newPassword.trim() ? { adminPass: newPassword.trim() } : {}),
+      ...(nextPassword ? { adminPass: nextPassword } : {}),
     }));
     setNewPassword('');
-    setNotice('Pengaturan admin berhasil disimpan.');
+    setCurrentPassword('');
   }
 
   function downloadTransactions() {
@@ -1193,10 +1271,32 @@ function App() {
                 </div>
                 <div className="border-t border-white/[0.07] pt-5">
                   <label htmlFor="admin-new-password" className="flex items-center gap-2 text-sm font-semibold text-white"><KeyRound size={16} className="text-amber-300" /> Ubah password admin</label>
-                  <p className="mt-1 text-xs text-zinc-500">Kosongkan jika tidak ingin mengubah password.</p>
-                  <input id="admin-new-password" type="password" className={inputClass} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Password baru" />
+                  <p className="mt-1 text-xs text-zinc-500">
+                    Password disimpan di database dan berlaku untuk semua perangkat. Kosongkan
+                    kedua kolom jika tidak ingin mengubah password.
+                  </p>
+                  <input
+                    id="admin-current-password"
+                    type="password"
+                    autoComplete="current-password"
+                    className={inputClass}
+                    value={currentPassword}
+                    onChange={(event) => setCurrentPassword(event.target.value)}
+                    placeholder="Password saat ini"
+                  />
+                  <input
+                    id="admin-new-password"
+                    type="password"
+                    autoComplete="new-password"
+                    className={`${inputClass} mt-3`}
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    placeholder="Password baru (minimal 8 karakter)"
+                  />
                 </div>
-                <Button type="submit"><Check size={16} /> Simpan pengaturan</Button>
+                <Button type="submit" disabled={settingsSaving}>
+                  <Check size={16} /> {settingsSaving ? 'Menyimpan…' : 'Simpan pengaturan'}
+                </Button>
               </form>
             )}
           </motion.section>
@@ -1233,12 +1333,15 @@ function App() {
               id="admin-password"
               autoFocus
               type="password"
+              autoComplete="current-password"
               className={inputClass}
               value={adminPassword}
               onChange={(event) => setAdminPassword(event.target.value)}
               placeholder="Masukkan password"
             />
-            <Button className="w-full" type="submit"><LockKeyhole size={16} /> Masuk</Button>
+            <Button className="w-full" type="submit" disabled={adminLoginPending}>
+              <LockKeyhole size={16} /> {adminLoginPending ? 'Memeriksa…' : 'Masuk'}
+            </Button>
           </form>
         </DialogContent>
       </Dialog>
