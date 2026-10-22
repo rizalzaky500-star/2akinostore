@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_ADMIN_PASSWORD, hashPassword, verifyPassword } from './password.js';
+import { hashPassword, verifyPassword } from './password.js';
+import { SEED_ADMIN_PASSWORD } from './seedPassword.js';
 
 test('a correct password verifies against its own hash', async () => {
   const hash = await hashPassword('rahasia123');
   assert.equal(await verifyPassword('rahasia123', hash), true);
 });
 
-test('the default admin password round-trips', async () => {
-  const hash = await hashPassword(DEFAULT_ADMIN_PASSWORD);
-  assert.equal(await verifyPassword(DEFAULT_ADMIN_PASSWORD, hash), true);
+test('the seed admin password round-trips', async () => {
+  const hash = await hashPassword(SEED_ADMIN_PASSWORD);
+  assert.equal(await verifyPassword(SEED_ADMIN_PASSWORD, hash), true);
 });
 
 test('a wrong password does not verify', async () => {

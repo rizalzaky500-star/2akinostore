@@ -1,7 +1,9 @@
 import { getAdminCredential } from './db.js';
-import { readSessionForCurrentPassword, sendJson } from './http.js';
+import { readSessionForCurrentPassword, requireTrustedOrigin, sendJson } from './http.js';
 
 export async function requireAdmin(req, res) {
+  if (!requireTrustedOrigin(req, res)) return false;
+
   let credential;
   try {
     credential = await getAdminCredential();

@@ -1,5 +1,6 @@
 import { MongoClient } from 'mongodb';
-import { DEFAULT_ADMIN_PASSWORD, hashPassword } from '../../src/lib/password.js';
+import { hashPassword } from '../../src/lib/password.js';
+import { SEED_ADMIN_PASSWORD } from '../../src/lib/seedPassword.js';
 
 const DB_NAME = process.env.MONGODB_DB || '2akinostore';
 const ADMIN_COLLECTION = 'admin_credentials';
@@ -52,7 +53,7 @@ export async function getAdminCredential() {
 
   const seeded = {
     _id: ADMIN_DOC_ID,
-    passwordHash: await hashPassword(DEFAULT_ADMIN_PASSWORD),
+    passwordHash: await hashPassword(SEED_ADMIN_PASSWORD),
     mustChangePassword: true,
     updatedAt: new Date(),
   };

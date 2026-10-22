@@ -108,6 +108,42 @@ input[type="search"]::-webkit-search-results-decoration {
   animation: card-in 350ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* View transitions used to run through a motion library. Plain CSS keeps the
+   same feel without shipping an animation runtime to the browser. */
+.fade-in {
+  animation: fade-in 220ms ease-out both;
+}
+
+.slide-in {
+  animation: slide-in 260ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.toast-in {
+  animation: toast-in 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 12px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
 @keyframes card-in {
   from {
     opacity: 0;

@@ -11,8 +11,6 @@ const PARALLELISM = 1; // p
 const KEY_LENGTH = 64;
 const SALT_LENGTH = 16;
 
-export const DEFAULT_ADMIN_PASSWORD = '2akinostore';
-
 /**
  * Hashes a plaintext password with a fresh random salt. The resulting string
  * is self-describing: it carries the parameters so verification keeps working

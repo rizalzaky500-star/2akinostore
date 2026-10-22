@@ -229,16 +229,44 @@ Because the browser never sees the hash or the connection string:
 - `MONGODB_URI` and `ADMIN_SESSION_SECRET` are **server-only** environment
   variables. Never prefix them with `VITE_`, or Vite inlines them into the
   client bundle and publishes your database credentials.
-- The client falls back to the legacy `localStorage` password only when the API
-  is unreachable, so a rollout or an outage cannot lock the owner out. That
-  fallback is browser-local and is not a security boundary.
+- There is **no client-side password fallback**. A previous version kept a copy
+  of the admin password in `localStorage` (and a hardcoded default in the
+  bundle) so the dashboard stayed usable while the API was down. That meant
+  anyone with DevTools could read the password, or block `/api/admin/login` and
+  sign in locally. Both paths are gone: when the API is unreachable the login
+  is refused with a clear message. The stale `adminPass` key is stripped from
+  `2akinostore_settings_v12` on the next page load, so an old copy is removed
+  rather than merely ignored.
 - `api/` is excluded from `src/**/*.test.js`; its endpoints are exercised
   against a live cluster rather than in CI.
 
-> **Migration note:** until the fallback is removed, the old browser-local
-> password still grants access while the API is offline. Delete the `adminPass`
-> entry from `2akinostore_settings_v12` once every device has signed in through
-> the API at least once.
+### Request hardening
+
+Beyond the signed cookie, the API rejects requests that cannot have come from
+the storefront:
+
+- **Origin check.** Every state-changing route (`login`, `logout`, `password`,
+  and all `/api/admin/catalog/*` writes) compares the `Origin` header against
+  the forwarded host and protocol. A cross-site request is answered `403` even
+  if it somehow carries a valid cookie.
+- **Login rate limiting.** `POST /api/admin/login` allows 5 attempts per minute
+  and 20 attempts per 15 minutes per client address, then answers `429` with a
+  `Retry-After` header. Successful logins reset that client's counters.
+- **Bounded bodies.** JSON bodies are capped at 64 KB and must be sent as
+  `application/json`; passwords over 200 characters are rejected before hashing.
+- **Headers.** A strict CSP (`script-src 'self'`, no inline scripts, no framing)
+  is injected into `index.html` at build time by the `contentSecurityPolicy()`
+  plugin in `vite.config.js`, so it ships with the bundle and also applies on
+  hosts that cannot set response headers. It is deliberately skipped during
+  `npm run dev` and `npx vercel dev`, where React Fast Refresh needs an inline
+  preamble. `vercel.json` adds the remaining headers for every route:
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, a referrer policy,
+  HSTS, COOP/CORP, and it disables camera, microphone, geolocation, and payment
+  APIs. API responses are `no-store`; hashed `/assets/*` are immutable.
+
+> **Note:** the in-memory rate limiter is per warm serverless instance. It
+> raises the cost of brute force substantially but is not a replacement for a
+> long unique admin password, and it resets when an instance is recycled.
 
 ## Performance notes
 
@@ -253,8 +281,21 @@ avoidable work:
 - The MongoDB catalog is fetched once on load. Catalog cards, the hero, and the
   service highlights are memoized so typing in search or editing admin fields
   does not re-render unrelated markup.
+- Search inputs are read through `useDeferredValue`, so a keystroke paints
+  immediately and the filtered list catches up at a lower priority on large
+  catalogs.
+- All view transitions (store, order tracking, dashboard, toast) are CSS
+  animations. The framer-motion runtime was removed entirely, which drops a
+  JavaScript animation engine and its per-frame work from the bundle.
+- `qrcode.react` is loaded lazily and only when a checkout reaches the payment
+  step, so the QR renderer is not part of the first paint.
+- `vite.config.js` splits vendors into stable chunks (React, Radix, icons, QR,
+  scanner). The ZXing scanner stays in its own lazy chunk and is fetched only
+  when the static QRIS image needs decoding.
 - Product cards fade in with a CSS animation instead of a JavaScript-driven
   effect, and the decorative shimmer/aurora animations pause while the tab is
   hidden.
 - Catalog and admin search group products in a single pass instead of rescanning
   the catalog once per category.
+- `vercel.json` serves hashed assets with a one-year immutable cache while the
+  API routes stay `no-store`.

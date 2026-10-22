@@ -1,5 +1,9 @@
 import { forwardRef } from 'react';
 import { cva } from 'class-variance-authority';
+import {
+  RippleButton,
+  RippleButtonRipples,
+} from '@animate-ui/react/primitives/buttons/ripple';
 import { cn } from '../../lib/utils.js';
 
 const buttonVariants = cva(
@@ -12,11 +16,13 @@ const buttonVariants = cva(
         ghost: 'text-zinc-400 hover:bg-white/[0.06] hover:text-white',
         success: 'bg-emerald-500 text-white hover:bg-emerald-400',
         danger: 'text-red-400 hover:bg-red-500/10 hover:text-red-300',
+        unstyled: '',
       },
       size: {
         default: 'h-11 px-5',
         sm: 'h-9 rounded-lg px-3 text-xs',
         icon: 'h-10 w-10',
+        none: '',
       },
     },
     defaultVariants: {
@@ -26,12 +32,17 @@ const buttonVariants = cva(
   },
 );
 
-const Button = forwardRef(({ className, variant, size, ...props }, ref) => (
-  <button
+const Button = forwardRef(({ children, className, variant, size, ...props }, ref) => (
+  <RippleButton
     ref={ref}
     className={cn(buttonVariants({ variant, size }), className)}
     {...props}
-  />
+  >
+    <span className="relative z-10 inline-flex items-center justify-center gap-2">
+      {children}
+    </span>
+    <RippleButtonRipples color="rgba(255, 255, 255, 0.22)" className="z-0" />
+  </RippleButton>
 ));
 Button.displayName = 'Button';
 

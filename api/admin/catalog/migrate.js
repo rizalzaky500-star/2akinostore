@@ -1,5 +1,5 @@
 import { requireAdmin } from '../../_lib/admin.js';
-import { migrateLegacyCatalog } from '../../_lib/catalog.js';
+import { CatalogError, migrateLegacyCatalog } from '../../_lib/catalog.js';
 import { readJsonBody, sendJson } from '../../_lib/http.js';
 
 export default async function handler(req, res) {
@@ -14,7 +14,9 @@ export default async function handler(req, res) {
     const result = await migrateLegacyCatalog(body);
     return sendJson(res, 200, { ok: true, ...result });
   } catch (error) {
-    if (error.statusCode) return sendJson(res, error.statusCode, { error: error.message });
+    if (error instanceof CatalogError) {
+      return sendJson(res, error.statusCode, { error: error.message });
+    }
     console.error('admin/catalog/migrate: gagal mengimpor katalog', error);
     return sendJson(res, 503, { error: 'Migrasi katalog gagal. Data yang sudah ada di MongoDB tidak ditimpa.' });
   }

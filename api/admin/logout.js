@@ -1,4 +1,4 @@
-import { clearSessionCookie, sendJson } from '../_lib/http.js';
+import { clearSessionCookie, requireTrustedOrigin, sendJson } from '../_lib/http.js';
 
 /**
  * POST /api/admin/logout
@@ -11,6 +11,7 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return sendJson(res, 405, { error: 'Metode tidak diizinkan.' });
   }
+  if (!requireTrustedOrigin(req, res)) return;
 
   res.setHeader('Set-Cookie', clearSessionCookie());
   return sendJson(res, 200, { ok: true });

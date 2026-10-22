@@ -5,9 +5,9 @@
  * scrypt hash in MongoDB. The browser never receives the hash or the database
  * credentials, which is why this replaces the old localStorage comparison.
  *
- * Every call reports whether the API was reachable. App.jsx falls back to the
- * legacy localStorage password when `reachable` is false, so a dashboard that
- * is briefly offline during rollout still lets the owner sign in.
+ * There is no offline fallback: an `unreachable` outcome is reported to the
+ * user and access stays closed, because any password the browser could check
+ * on its own would have to ship inside the bundle.
  */
 
 const BASE = '/api/admin';

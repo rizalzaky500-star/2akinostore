@@ -1,5 +1,15 @@
-import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ArrowDownToLine,
   ArrowRight,
@@ -30,9 +40,7 @@ import {
   Tv,
   WalletCards,
 } from 'lucide-react';
-import { QRCodeSVG } from 'qrcode.react';
-import qrisImage from '../DANA.jpeg';
-import { Button } from './components/ui/button.jsx';
+import qrisImage from '../DANA.jpeg';import { Button } from './components/ui/button.jsx';
 import {
   Dialog,
   DialogContent,
@@ -95,14 +103,52 @@ const defaultProducts = [
   { id: 'p7', category: 'iQIYI', title: 'iQIYI VIP Premium Standard', price: 20000, duration: '1 Bulan Garansi Full', icon: 'iqiyi' },
 ];
 
-const defaultSettings = { adminWA: '6285111219046', adminPass: '0987654321' };
+const defaultSettings = { adminWA: '6285111219046' };
 const currency = new Intl.NumberFormat('id-ID');
 const inputClass =
   'mt-2 h-11 w-full rounded-xl border border-white/15 bg-black/40 px-4 text-sm text-white outline-none transition placeholder:text-zinc-400 focus:border-red-500/70 focus:ring-2 focus:ring-red-500/15';
 
+// The QR renderer is only needed once a customer reaches the payment step, so
+// it is split out of the initial bundle instead of shipping on every visit.
+const LazyQrCode = lazy(() =>
+  import('qrcode.react').then((module) => ({ default: module.QRCodeSVG })),
+);
+
+/**
+ * Reads a persisted JSON value. A corrupted or hand-edited entry must never
+ * break the app, so anything unparsable falls back to the default.
+ */
 function readStorage(key, fallback) {
-  const value = localStorage.getItem(key);
-  return value ? JSON.parse(value) : fallback;
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Settings used to persist the admin password in localStorage. That key is
+ * dropped on load so an old copy cannot be read from DevTools on a device that
+ * still carries it; the password now lives only as a scrypt hash in MongoDB.
+ */
+function readSettings() {
+  const stored = readStorage(STORAGE_KEY_SETTINGS, null);
+  if (!stored || typeof stored !== 'object') return defaultSettings;
+  const { adminPass: _discardedPassword, ...rest } = stored;
+  return { ...defaultSettings, ...rest };
+}
+
+/** Rewrites the stored settings without the legacy plaintext password. */
+function purgeLegacyStoredPassword() {
+  const stored = readStorage(STORAGE_KEY_SETTINGS, null);
+  if (!stored || typeof stored !== 'object' || !('adminPass' in stored)) return;
+  const { adminPass: _discardedPassword, ...rest } = stored;
+  try {
+    localStorage.setItem(STORAGE_KEY_SETTINGS, JSON.stringify(rest));
+  } catch {
+    // Storage can be full or blocked; the in-memory settings are already clean.
+  }
 }
 
 function migrateYouTubeBranding(categories, products) {
@@ -308,7 +354,7 @@ function App() {
   const [catalogError, setCatalogError] = useState('');
   const [catalogImporting, setCatalogImporting] = useState(false);
   const [transactions, setTransactions] = useState(() => readStorage(STORAGE_KEY_TRANS, []));
-  const [settings, setSettings] = useState(() => readStorage(STORAGE_KEY_SETTINGS, defaultSettings));
+  const [settings, setSettings] = useState(readSettings);
   const [activeTab, setActiveTab] = useState('store');
   const [adminTab, setAdminTab] = useState('products');
   const [selectedCategory, setSelectedCategory] = useState('All');
@@ -378,6 +424,10 @@ function App() {
     loadCatalog().catch((error) => console.error('Gagal memuat katalog dari server.', error));
   }, [loadCatalog]);
 
+  useEffect(() => {
+    purgeLegacyStoredPassword();
+  }, []);
+
   const persistedKeys = useRef(new Set());
   useEffect(() => {
     if (persistedKeys.current.has(STORAGE_KEY_TRANS)) {
@@ -436,13 +486,19 @@ function App() {
     };
   }, []);
 
+  // Two search boxes filter the catalog on every keystroke. Deferring the
+  // query keeps typing responsive: React renders the raw input immediately and
+  // re-filters at a lower priority.
+  const deferredCatalogSearch = useDeferredValue(catalogSearchQuery);
+  const deferredProductSearch = useDeferredValue(productSearchQuery);
+
   const visibleProducts = useMemo(() => {
-    return filterProducts(products, catalogSearchQuery).filter(
+    return filterProducts(products, deferredCatalogSearch).filter(
       (product) =>
         selectedCategory === 'All' ||
         product.category.toLowerCase() === selectedCategory.toLowerCase(),
     );
-  }, [catalogSearchQuery, products, selectedCategory]);
+  }, [deferredCatalogSearch, products, selectedCategory]);
 
   const matchedTransactions = useMemo(() => {
     const query = trackQuery.trim().toLowerCase();
@@ -470,8 +526,8 @@ function App() {
   }, [categories]);
 
   const adminProductGroups = useMemo(
-    () => groupProductsByCategory(categories, products, productSearchQuery),
-    [categories, products, productSearchQuery],
+    () => groupProductsByCategory(categories, products, deferredProductSearch),
+    [categories, products, deferredProductSearch],
   );
 
   function openAdminAccess() {
@@ -480,14 +536,18 @@ function App() {
   }
 
   /**
-   * Verifies the password against the server first. When the API cannot be
-   * reached (not deployed yet, offline, or the database is down), it falls
-   * back to the legacy localStorage password so the owner is never locked out
-   * during the transition. The server path is the source of truth.
+   * Verifies the password on the server, which is the only place that holds
+   * the scrypt hash. There is deliberately no client-side fallback: anything
+   * the browser could compare would have to ship the password in the bundle,
+   * where DevTools makes it readable.
    */
   async function handleAdminLogin(event) {
     event.preventDefault();
     const attempt = adminPassword.trim();
+    if (!attempt) {
+      setNotice('Mohon masukkan password admin.');
+      return;
+    }
     setAdminLoginPending(true);
 
     try {
@@ -499,12 +559,7 @@ function App() {
       }
 
       if (result.outcome === 'unreachable') {
-        const legacy = settings.adminPass || defaultSettings.adminPass;
-        if (attempt === legacy) {
-          grantAdminAccess(false, ' (mode lokal)');
-          return;
-        }
-        setNotice('Password admin salah.');
+        setNotice('Server admin tidak terjangkau. Periksa koneksi lalu coba lagi.');
         return;
       }
 
@@ -514,7 +569,7 @@ function App() {
     }
   }
 
-  function grantAdminAccess(mustChange, suffix = '') {
+  function grantAdminAccess(mustChange) {
     setIsAdminLoggedIn(true);
     setAdminPassword('');
     setLoginOpen(false);
@@ -522,7 +577,7 @@ function App() {
     setNotice(
       mustChange
         ? 'Berhasil masuk. Password masih default — segera ganti di Pengaturan.'
-        : `Berhasil masuk ke dashboard admin.${suffix}`,
+        : 'Berhasil masuk ke dashboard admin.',
     );
   }
 
@@ -816,8 +871,8 @@ function App() {
   /**
    * Saves the admin settings. The WhatsApp number stays browser-local, but a
    * new password is written to MongoDB through the server, so the change
-   * applies on every device instead of only the current browser. The local
-   * copy is kept as the offline fallback used by handleAdminLogin.
+   * applies on every device instead of only the current browser. The password
+   * itself is never stored locally.
    */
   async function saveAdminSettings(event) {
     event.preventDefault();
@@ -842,12 +897,10 @@ function App() {
           return;
         }
         if (result.outcome === 'unreachable') {
-          // Offline: keep the old behaviour rather than silently dropping the
-          // change, and be explicit that it is browser-local only.
-          setNotice('Server tidak terjangkau. Password hanya diubah di browser ini.');
-        } else {
-          setNotice('Password admin tersimpan di database.');
+          setNotice('Server tidak terjangkau. Password tidak diubah.');
+          return;
         }
+        setNotice('Password admin tersimpan di database.');
       } finally {
         setSettingsSaving(false);
       }
@@ -855,11 +908,7 @@ function App() {
       setNotice('Pengaturan admin berhasil disimpan.');
     }
 
-    setSettings((current) => ({
-      ...current,
-      adminWA: cleanNumber,
-      ...(nextPassword ? { adminPass: nextPassword } : {}),
-    }));
+    setSettings((current) => ({ ...current, adminWA: cleanNumber }));
     setNewPassword('');
     setCurrentPassword('');
   }
@@ -918,7 +967,9 @@ function App() {
     <div className="min-h-screen">
       <header className="sticky top-0 z-40 border-b border-white/[0.07] bg-[#09090b]/85 backdrop-blur-xl">
         <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between gap-2 px-3 max-[360px]:gap-1 max-[360px]:px-2 sm:gap-4 sm:px-6">
-          <button
+          <Button
+            variant="unstyled"
+            size="none"
             type="button"
             onClick={() => setActiveTab('store')}
             className="flex items-center gap-2 text-left sm:gap-3"
@@ -933,15 +984,17 @@ function App() {
               </span>
               <span className="hidden text-[10px] tracking-wide text-zinc-500 sm:block">Akun digital, tanpa ribet</span>
             </span>
-          </button>
+          </Button>
 
           <nav className="flex shrink-0 items-center gap-1 rounded-xl border border-white/[0.07] bg-white/[0.025] p-1" aria-label="Navigasi utama">
             {[
               { id: 'store', label: 'Toko', icon: ShoppingBag },
               { id: 'track', label: 'Cek Pesanan', icon: Search },
             ].map(({ id, label, icon: Icon }) => (
-              <button
+              <Button
                 key={id}
+                variant="unstyled"
+                size="none"
                 type="button"
                 onClick={() => setActiveTab(id)}
                 aria-label={label}
@@ -952,9 +1005,11 @@ function App() {
               >
                 <Icon size={15} />
                 <span className="hidden sm:inline">{label}</span>
-              </button>
+              </Button>
             ))}
-            <button
+            <Button
+              variant="unstyled"
+              size="none"
               type="button"
               onClick={openAdminAccess}
               aria-label="Admin"
@@ -965,14 +1020,14 @@ function App() {
             >
               <Settings2 size={15} />
               <span className="hidden sm:inline">Admin</span>
-            </button>
+            </Button>
           </nav>
         </div>
       </header>
 
       <main className="mx-auto max-w-7xl px-4 pb-24 pt-8 sm:px-6 sm:pt-12">
         {activeTab === 'store' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-12">
+          <div className="space-y-12 fade-in">
             <HeroSection whatsappNumber={activeWhatsApp} />
 
             <section id="catalog">
@@ -1042,7 +1097,9 @@ function App() {
                 {catalogCategories.map(({ name, icon }) => {
                   const active = selectedCategory === name;
                   return (
-                    <button
+                    <Button
+                      variant="unstyled"
+                      size="none"
                       type="button"
                       key={name}
                       onClick={() => setSelectedCategory(name)}
@@ -1054,7 +1111,7 @@ function App() {
                     >
                       {name === 'All' ? <Package size={15} /> : iconFor(icon, 15)}
                       {name === 'All' ? 'Semua produk' : name}
-                    </button>
+                    </Button>
                   );
                 })}
               </div>
@@ -1106,15 +1163,11 @@ function App() {
             </section>
 
             <ServiceHighlights />
-          </motion.div>
+          </div>
         )}
 
         {activeTab === 'track' && (
-          <motion.section
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mx-auto max-w-2xl pt-5 sm:pt-12"
-          >
+          <section className="mx-auto max-w-2xl pt-5 sm:pt-12 slide-in">
             <div className="mb-8 text-center">
               <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-red-500/20 bg-red-500/10 text-red-300">
                 <Search size={20} />
@@ -1170,11 +1223,11 @@ function App() {
                 )}
               </div>
             )}
-          </motion.section>
+          </section>
         )}
 
         {activeTab === 'admin' && isAdminLoggedIn && (
-          <motion.section initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+          <section className="slide-in">
             <div className="mb-7 flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.08] pb-6">
               <div>
                 <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-red-400">Workspace</p>
@@ -1208,7 +1261,9 @@ function App() {
                 { id: 'transactions', label: 'Transaksi', icon: WalletCards },
                 { id: 'settings', label: 'Pengaturan', icon: Settings2 },
               ].map(({ id, label, icon: Icon }) => (
-                <button
+                <Button
+                  variant="unstyled"
+                  size="none"
                   key={id}
                   type="button"
                   onClick={() => setAdminTab(id)}
@@ -1217,7 +1272,7 @@ function App() {
                   }`}
                 >
                   <Icon size={15} /> {label}
-                </button>
+                </Button>
               ))}
             </div>
 
@@ -1465,7 +1520,7 @@ function App() {
                 </Button>
               </form>
             )}
-          </motion.section>
+          </section>
         )}
       </main>
 
@@ -1685,16 +1740,18 @@ function App() {
               </div>
               <div className="mx-auto w-fit max-w-full rounded-3xl border-4 border-zinc-200 bg-white p-4 text-zinc-900 shadow-xl">
                 <div className="mb-3 flex items-center justify-center gap-1 text-xs font-black tracking-wider text-red-600"><QrCode size={15} /> QRIS NATIONAL</div>
-                <QRCodeSVG
-                  id="dynamic-qris-code"
-                  value={dynamicQrisPayload}
-                  size={208}
-                  level="M"
-                  marginSize={2}
-                  bgColor="#ffffff"
-                  fgColor="#09090b"
-                  title={`QRIS dinamis sebesar ${formatPrice(invoice.amount)}`}
-                />
+                <Suspense fallback={<div className="mx-auto h-[208px] w-[208px] animate-pulse rounded-lg bg-zinc-200" />}>
+                  <LazyQrCode
+                    id="dynamic-qris-code"
+                    value={dynamicQrisPayload}
+                    size={208}
+                    level="M"
+                    marginSize={2}
+                    bgColor="#ffffff"
+                    fgColor="#09090b"
+                    title={`QRIS dinamis sebesar ${formatPrice(invoice.amount)}`}
+                  />
+                </Suspense>
                 <p className="mt-3 text-[10px] font-semibold text-zinc-500">2AKINOSTORE DIGITAL</p>
                 <p className="mt-0.5 text-lg font-black">{formatPrice(invoice.amount)}</p>
                 <p className="font-mono text-[10px] text-zinc-400">{invoice.code}</p>
@@ -1736,19 +1793,14 @@ function App() {
         </DialogContent>
       </Dialog>
 
-      <AnimatePresence>
-        {notice && (
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 8 }}
-            role="status"
-            className="fixed bottom-20 left-1/2 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-zinc-900 px-4 py-3 text-xs font-medium text-zinc-100 shadow-2xl sm:bottom-5"
-          >
-            <CheckCircle2 size={15} className="shrink-0 text-emerald-400" /> {notice}
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {notice && (
+        <div
+          role="status"
+          className="toast-in fixed bottom-20 left-1/2 z-[60] flex max-w-[calc(100%-2rem)] -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-zinc-900 px-4 py-3 text-xs font-medium text-zinc-100 shadow-2xl sm:bottom-5"
+        >
+          <CheckCircle2 size={15} className="shrink-0 text-emerald-400" /> {notice}
+        </div>
+      )}
     </div>
   );
 }

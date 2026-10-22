@@ -1,14 +1,17 @@
 import { getAdminCredential, updateAdminPassword } from '../_lib/db.js';
-import { DEFAULT_ADMIN_PASSWORD, hashPassword, verifyPassword } from '../../src/lib/password.js';
+import { hashPassword, verifyPassword } from '../../src/lib/password.js';
+import { SEED_ADMIN_PASSWORD } from '../../src/lib/seedPassword.js';
 import {
   buildSessionCookie,
   fingerprint,
   readJsonBody,
   readSessionForCurrentPassword,
+  requireTrustedOrigin,
   sendJson,
 } from '../_lib/http.js';
 
 const MIN_PASSWORD_LENGTH = 8;
+const MAX_PASSWORD_LENGTH = 200;
 
 /**
  * POST /api/admin/password
@@ -23,7 +26,7 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'POST');
     return sendJson(res, 405, { error: 'Metode tidak diizinkan.' });
   }
-
+  if (!requireTrustedOrigin(req, res)) return;
 
   const body = await readJsonBody(req);
   const currentPassword = body?.currentPassword;
@@ -37,8 +40,14 @@ export default async function handler(req, res) {
       error: `Password baru minimal ${MIN_PASSWORD_LENGTH} karakter.`,
     });
   }
-  if (newPassword === DEFAULT_ADMIN_PASSWORD) {
+  if (newPassword.length > MAX_PASSWORD_LENGTH) {
+    return sendJson(res, 400, { error: 'Password baru terlalu panjang.' });
+  }
+  if (newPassword === SEED_ADMIN_PASSWORD) {
     return sendJson(res, 400, { error: 'Password baru tidak boleh sama dengan password default.' });
+  }
+  if (newPassword === currentPassword) {
+    return sendJson(res, 400, { error: 'Password baru harus berbeda dari password saat ini.' });
   }
 
   let credential;
