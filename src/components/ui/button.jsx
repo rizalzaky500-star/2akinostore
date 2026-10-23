@@ -87,13 +87,7 @@ const Button = forwardRef(({ children, className, variant, size, as, style, ...p
     );
   }
 
-  const radius = className?.includes('rounded-full')
-    ? 999
-    : selectedSize === 'sm'
-      ? 8
-      : selectedSize === 'icon'
-        ? 10
-        : 12;
+  const radius = className?.includes('rounded-full') ? 999 : selectedSize === 'sm' ? 8 : 12;
   const padding = selectedSize === 'sm'
     ? '0 0.75rem'
     : selectedSize === 'icon' || selectedSize === 'none'
