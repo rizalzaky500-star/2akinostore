@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 
 import './StarBorder.css';
 
@@ -127,7 +127,7 @@ const project = (shape, px, py) => {
   return found;
 };
 
-const StarBorder = ({
+const StarBorder = forwardRef(({
   as: Component = 'button',
   children,
   className = '',
@@ -149,10 +149,11 @@ const StarBorder = ({
   textColor,
   borderColor,
   ...rest
-}) => {
+}, forwardedRef) => {
   const rootRef = useRef(null);
   const canvasRef = useRef(null);
   const wakeRef = useRef(null);
+  useImperativeHandle(forwardedRef, () => rootRef.current);
   const palette = THEMES[theme] ?? THEMES.dark;
   const light = color ?? palette.light;
   const settings = {
@@ -564,6 +565,7 @@ const StarBorder = ({
       {children}
     </Component>
   );
-};
+});
 
+StarBorder.displayName = 'StarBorder';
 export default StarBorder;
