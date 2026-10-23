@@ -31,6 +31,7 @@ import {
   PenTool,
   Plus,
   QrCode,
+  RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
@@ -40,7 +41,6 @@ import {
   Tv,
   WalletCards,
 } from 'lucide-react';
-import qrisImage from '../DANA.jpeg';
 import { Button } from './components/ui/button.jsx';
 import RubberSegment from './components/RubberSegment.jsx';
 import {
@@ -55,7 +55,6 @@ import {
   groupProductsByCategory,
   normalizeStockInput,
 } from './lib/catalog.js';
-import { createDynamicQris, validateQrisPayload } from './lib/qris.js';
 import {
   isQrisOpen,
   STORE_CLOSED_MESSAGE,
@@ -64,7 +63,6 @@ import {
   resolvePurchaseGuide,
 } from './lib/guides.js';
 import {
-  consumeCatalogProductStock,
   createCatalogCategory,
   createCatalogProduct,
   fetchCatalog,
@@ -79,6 +77,11 @@ import {
   loginAdmin,
   logoutAdmin as logoutAdminRequest,
 } from './lib/adminAuth.js';
+import {
+  createPayment,
+  fetchAdminPayments,
+  fetchPaymentStatus,
+} from './lib/paymentApi.js';
 
 const STORAGE_KEY_CATS = '2akinostore_cats_v12';
 const STORAGE_KEY_PRODS = '2akinostore_products_v12';
@@ -177,6 +180,18 @@ function migrateYouTubeBranding(categories, products) {
 
 function formatPrice(amount) {
   return `Rp ${currency.format(amount)}`;
+}
+
+function paymentStatusLabel(status) {
+  switch (status) {
+    case 'paid': return 'Terverifikasi Xendit';
+    case 'failed': return 'Gagal';
+    case 'expired': return 'Kedaluwarsa';
+    case 'review': return 'Perlu ditinjau';
+    case 'creating': return 'Menyiapkan pembayaran';
+    case 'legacy': return 'Riwayat lokal';
+    default: return 'Menunggu pembayaran';
+  }
 }
 
 function WeTVLogo({ size = 18, className = '' }) {
@@ -360,6 +375,9 @@ function App() {
   const [catalogError, setCatalogError] = useState('');
   const [catalogImporting, setCatalogImporting] = useState(false);
   const [transactions, setTransactions] = useState(() => readStorage(STORAGE_KEY_TRANS, []));
+  const [adminPayments, setAdminPayments] = useState([]);
+  const [adminPaymentsLoading, setAdminPaymentsLoading] = useState(false);
+  const [adminPaymentsError, setAdminPaymentsError] = useState('');
   const [settings, setSettings] = useState(readSettings);
   const [activeTab, setActiveTab] = useState('store');
   const [adminTab, setAdminTab] = useState('products');
@@ -374,9 +392,11 @@ function App() {
   const [checkoutProduct, setCheckoutProduct] = useState(null);
   const [checkoutStep, setCheckoutStep] = useState('form');
   const [invoice, setInvoice] = useState(null);
-  const [staticQrisPayload, setStaticQrisPayload] = useState('');
-  const [qrisSourceError, setQrisSourceError] = useState('');
   const [dynamicQrisPayload, setDynamicQrisPayload] = useState('');
+  const [paymentCreating, setPaymentCreating] = useState(false);
+  const paymentCreatingRef = useRef(false);
+  const [paymentChecking, setPaymentChecking] = useState(false);
+  const [paymentStatusError, setPaymentStatusError] = useState('');
   const [customerName, setCustomerName] = useState('');
   const [customerWA, setCustomerWA] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
@@ -398,6 +418,9 @@ function App() {
   const [guideDrafts, setGuideDrafts] = useState({});
   const [categoryGuideDrafts, setCategoryGuideDrafts] = useState({});
   const [trackQuery, setTrackQuery] = useState('');
+  const [trackResult, setTrackResult] = useState(null);
+  const [trackLoading, setTrackLoading] = useState(false);
+  const [trackError, setTrackError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(() => new Date());
 
@@ -430,6 +453,51 @@ function App() {
     loadCatalog().catch((error) => console.error('Gagal memuat katalog dari server.', error));
   }, [loadCatalog]);
 
+  const loadAdminPayments = useCallback(async () => {
+    setAdminPaymentsLoading(true);
+    setAdminPaymentsError('');
+    try {
+      setAdminPayments(await fetchAdminPayments());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Riwayat pembayaran gagal dimuat.';
+      setAdminPaymentsError(message);
+    } finally {
+      setAdminPaymentsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'admin' || !isAdminLoggedIn || adminTab !== 'transactions') return undefined;
+    loadAdminPayments();
+    const interval = window.setInterval(loadAdminPayments, 15000);
+    return () => window.clearInterval(interval);
+  }, [activeTab, adminTab, isAdminLoggedIn, loadAdminPayments]);
+
+  useEffect(() => {
+    if (checkoutStep !== 'qris' || !invoice?.code) return undefined;
+    let cancelled = false;
+    const checkStatus = async () => {
+      try {
+        const payment = await fetchPaymentStatus(invoice.code);
+        if (cancelled) return;
+        setInvoice((current) => current?.code === invoice.code ? { ...current, ...payment } : current);
+        setPaymentStatusError('');
+        if (payment.status === 'paid') setCheckoutStep('success');
+      } catch (error) {
+        if (!cancelled) {
+          const message = error instanceof Error ? error.message : 'Status pembayaran gagal dimuat.';
+          setPaymentStatusError(message);
+        }
+      }
+    };
+    checkStatus();
+    const interval = window.setInterval(checkStatus, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [checkoutStep, invoice?.code]);
+
   useEffect(() => {
     purgeLegacyStoredPassword();
   }, []);
@@ -449,28 +517,6 @@ function App() {
       persistedKeys.current.add(STORAGE_KEY_SETTINGS);
     }
   }, [settings]);
-  useEffect(() => {
-    // Decode the store's static QRIS image only when a checkout actually needs
-    // it. This keeps the (large) zxing decoder out of the initial load budget
-    // and stops it from competing with first paint.
-    if (!checkoutProduct || staticQrisPayload || qrisSourceError) return undefined;
-
-    let cancelled = false;
-    import('@zxing/browser')
-      .then(({ BrowserQRCodeReader }) => new BrowserQRCodeReader().decodeFromImageUrl(qrisImage))
-      .then((result) => {
-        if (!cancelled) setStaticQrisPayload(result.getText());
-      })
-      .catch((error) => {
-        console.error('Unable to decode the configured static QRIS image.', error);
-        if (!cancelled) {
-          setQrisSourceError('Kode QRIS toko tidak dapat dibaca. Silakan hubungi admin.');
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [checkoutProduct, staticQrisPayload, qrisSourceError]);
   useEffect(() => {
     if (!notice) return undefined;
     const timeout = window.setTimeout(() => setNotice(''), 3200);
@@ -505,16 +551,6 @@ function App() {
         product.category.toLowerCase() === selectedCategory.toLowerCase(),
     );
   }, [deferredCatalogSearch, products, selectedCategory]);
-
-  const matchedTransactions = useMemo(() => {
-    const query = trackQuery.trim().toLowerCase();
-    if (!query) return [];
-    return transactions.filter(
-      (transaction) =>
-        transaction.code.toLowerCase().includes(query) ||
-        transaction.customerWA.toLowerCase().includes(query),
-    );
-  }, [trackQuery, transactions]);
 
   const qrisOpen = isQrisOpen(now);
 
@@ -603,12 +639,14 @@ function App() {
     setCheckoutStep('form');
     setInvoice(null);
     setDynamicQrisPayload('');
+    setPaymentStatusError('');
     setCustomerName('');
     setCustomerWA('');
   }, []);
 
-  function processToQRIS(event) {
+  async function processToQRIS(event) {
     event.preventDefault();
+    if (paymentCreatingRef.current) return;
     if (!customerName.trim() || !customerWA.trim()) {
       setNotice('Mohon isi nama lengkap dan nomor WhatsApp Anda.');
       return;
@@ -618,75 +656,60 @@ function App() {
       setNotice(STORE_CLOSED_MESSAGE);
       return;
     }
-    if (!staticQrisPayload) {
-      setNotice(qrisSourceError || 'Sedang memuat kode QRIS toko. Coba lagi sebentar.');
-      return;
-    }
 
-    setQrisSourceError('');
+    paymentCreatingRef.current = true;
+    setPaymentCreating(true);
+    setPaymentStatusError('');
     try {
-      const dynamicPayload = createDynamicQris(staticQrisPayload, checkoutProduct.price);
-      if (validateQrisPayload(dynamicPayload) !== checkoutProduct.price) {
-        throw new Error('Nominal pada QRIS tidak sesuai dengan total pesanan.');
-      }
-      const nextInvoice = {
-        code: `INV-${Math.floor(100000 + Math.random() * 900000)}`,
-        date: new Date().toLocaleString('id-ID'),
+      const createdInvoice = await createPayment({
+        productId: checkoutProduct.id,
+        customerName: customerName.trim(),
+        customerWA: customerWA.trim(),
+      });
+      setInvoice({
+        ...createdInvoice,
         customerName: customerName.trim(),
         customerWA: customerWA.trim(),
         productId: checkoutProduct.id,
-        productTitle: checkoutProduct.title,
-        amount: checkoutProduct.price,
-        status: 'pending',
-      };
-      setInvoice(nextInvoice);
-      setDynamicQrisPayload(dynamicPayload);
+      });
+      setDynamicQrisPayload(createdInvoice.qrCode);
       setCheckoutStep('qris');
     } catch (error) {
-      console.error('Unable to create an amount-specific dynamic QRIS code.', error);
-      setQrisSourceError(error instanceof Error ? error.message : 'QRIS dinamis gagal dibuat. Silakan hubungi admin.');
+      const message = error instanceof Error ? error.message : 'QRIS gagal dibuat. Silakan hubungi admin.';
+      setPaymentStatusError(message);
+    } finally {
+      paymentCreatingRef.current = false;
+      setPaymentCreating(false);
     }
   }
 
-  function confirmPayment() {
+  async function confirmPayment() {
     if (!invoice) return;
-    if (!isQrisOpen(new Date())) {
-      setNotice(STORE_CLOSED_MESSAGE);
-      return;
+    setPaymentChecking(true);
+    setPaymentStatusError('');
+    try {
+      const payment = await fetchPaymentStatus(invoice.code);
+      setInvoice((current) => current?.code === invoice.code ? { ...current, ...payment } : current);
+      if (payment.status === 'paid') setCheckoutStep('success');
+      else setNotice('Pembayaran belum terkonfirmasi oleh Xendit. Status akan diperbarui otomatis.');
+    } catch (error) {
+      setPaymentStatusError(error instanceof Error ? error.message : 'Status pembayaran gagal dimuat.');
+    } finally {
+      setPaymentChecking(false);
     }
-    setTransactions((current) => [invoice, ...current]);
-    setCheckoutStep('success');
   }
 
-  async function verifyTransaction(invoiceCode) {
-    const transaction = transactions.find((item) => item.code === invoiceCode);
-    if (!transaction || transaction.status === 'paid') return;
-    const product = products.find((item) => item.id === transaction.productId);
-    if (!product) {
-      setNotice('Produk pada transaksi tidak ditemukan di katalog.');
-      return;
-    }
-    if (product.stock === 0) {
-      setNotice('Stok produk habis. Tambahkan stok sebelum memverifikasi pembayaran.');
-      return;
-    }
-    const confirmed = window.confirm(
-      `Pastikan pembayaran ${formatPrice(transaction.amount)} untuk invoice ${transaction.code} sudah diterima di akun QRIS merchant. Lanjutkan verifikasi manual?`,
-    );
-    if (!confirmed) return;
+  async function searchPayment(event) {
+    event.preventDefault();
+    setTrackLoading(true);
+    setTrackError('');
+    setTrackResult(null);
     try {
-      const updatedProduct = await consumeCatalogProductStock(transaction.productId);
-      setProducts((current) => current.map((item) => (item.id === updatedProduct.id ? updatedProduct : item)));
-      setTransactions((current) =>
-        current.map((item) =>
-          item.code === invoiceCode
-            ? { ...item, status: 'paid', verifiedAt: new Date().toLocaleString('id-ID') }
-            : item,
-        ),
-      );
-      setNotice(`Invoice ${invoiceCode} ditandai terverifikasi oleh admin.`);
+      setTrackResult(await fetchPaymentStatus(trackQuery.trim()));
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Verifikasi pembayaran gagal.');
+      setTrackError(error instanceof Error ? error.message : 'Pesanan tidak dapat dicari.');
+    } finally {
+      setTrackLoading(false);
     }
   }
 
@@ -920,12 +943,21 @@ function App() {
   }
 
   function downloadTransactions() {
-    if (transactions.length === 0) {
+    if (adminTransactionRows.length === 0 && transactions.length === 0) {
       setNotice('Belum ada data transaksi untuk diunduh.');
       return;
     }
     const rows = [
       ['Invoice', 'Tanggal', 'Nama Pembeli', 'Nomor WA', 'Produk', 'Total Harga', 'Status'],
+      ...adminPayments.map((payment) => [
+        payment.invoiceCode,
+        payment.createdAt ? new Date(payment.createdAt).toLocaleString('id-ID') : '',
+        payment.customerName,
+        payment.customerWA,
+        payment.productTitle,
+        payment.amount,
+        paymentStatusLabel(payment.status),
+      ]),
       ...transactions.map((transaction) => [
         transaction.code,
         transaction.date,
@@ -933,7 +965,7 @@ function App() {
         transaction.customerWA,
         transaction.productTitle,
         transaction.amount,
-        transaction.status === 'paid' ? 'Terverifikasi admin' : 'Menunggu verifikasi admin',
+        'Riwayat lokal lama; status tidak diverifikasi Xendit',
       ]),
     ];
     const csv = rows
@@ -957,7 +989,7 @@ function App() {
       localStorage.setItem(STORAGE_KEY_TRANS, JSON.stringify([]));
       setTransactions([]);
       setClearTransactionsOpen(false);
-      setNotice('Seluruh riwayat transaksi berhasil dihapus.');
+      setNotice('Riwayat lokal di browser ini berhasil dihapus.');
     } catch (error) {
       console.error('Gagal menghapus seluruh riwayat transaksi.', error);
       setNotice('Riwayat transaksi gagal dihapus. Data belum diubah.');
@@ -968,6 +1000,15 @@ function App() {
 
 
   const activeWhatsApp = settings.adminWA || defaultSettings.adminWA;
+  const adminTransactionRows = [
+    ...adminPayments.map((payment) => ({
+      ...payment,
+      code: payment.invoiceCode,
+      date: payment.createdAt ? new Date(payment.createdAt).toLocaleString('id-ID') : '',
+      source: 'xendit',
+    })),
+    ...transactions.map((transaction) => ({ ...transaction, status: 'legacy', source: 'legacy' })),
+  ];
 
   return (
     <div className="min-h-screen">
@@ -1172,56 +1213,68 @@ function App() {
               </div>
               <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-red-400">Pelacakan pesanan</p>
               <h1 className="mt-2 text-3xl font-bold tracking-tight text-white">Cek detail pesanan</h1>
-              <p className="mt-3 text-sm text-zinc-400">Cari menggunakan ID invoice atau nomor WhatsApp saat transaksi.</p>
+              <p className="mt-3 text-sm text-zinc-400">Gunakan ID invoice untuk melihat status langsung dari server pembayaran.</p>
             </div>
-            <div className="rounded-2xl border border-white/[0.08] bg-[#111114] p-4 sm:p-6">
-              <label htmlFor="track-query" className="text-xs font-semibold text-zinc-300">ID Invoice / Nomor WhatsApp</label>
+            <form onSubmit={searchPayment} className="rounded-2xl border border-white/[0.08] bg-[#111114] p-4 sm:p-6">
+              <label htmlFor="track-query" className="text-xs font-semibold text-zinc-300">ID Invoice</label>
               <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                 <input
                   id="track-query"
                   className={`${inputClass} mt-0 flex-1`}
                   value={trackQuery}
-                  onChange={(event) => setTrackQuery(event.target.value)}
-                  placeholder="Contoh: INV-8921 atau 08123456789"
+                  onChange={(event) => {
+                    setTrackQuery(event.target.value);
+                    setTrackResult(null);
+                    setTrackError('');
+                  }}
+                  placeholder="Contoh: INV-0123456789ABCDEF"
                 />
-                <Button onClick={() => setTrackQuery((value) => value.trim())}><Search size={16} /> Cari pesanan</Button>
+                <Button type="submit" disabled={trackLoading}>
+                  <Search size={16} /> {trackLoading ? 'Mencari…' : 'Cari pesanan'}
+                </Button>
               </div>
-            </div>
-            {trackQuery.trim() && (
+            </form>
+            {trackError && (
+              <div role="alert" className="mt-5 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-5 text-center text-sm text-amber-100">
+                {trackError}
+              </div>
+            )}
+            {trackResult && (
               <div className="mt-5 space-y-3">
-                {matchedTransactions.length ? matchedTransactions.map((transaction) => (
-                  <article key={transaction.code} className="rounded-2xl border border-white/[0.08] bg-[#111114] p-5">
-                    <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/[0.07] pb-4">
-                      <div>
-                        <span className="font-mono text-xs font-bold text-red-300">{transaction.code}</span>
-                        <h2 className="mt-1 font-semibold text-white">{transaction.productTitle}</h2>
-                        <p className="mt-1 text-xs text-zinc-500">{transaction.date} · {transaction.customerName}</p>
-                      </div>
-                      <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${
-                        transaction.status === 'paid'
-                          ? 'border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300'
-                          : 'border-amber-500/20 bg-amber-500/[0.08] text-amber-300'
-                      }`}>
-                        {transaction.status === 'paid' ? 'Terverifikasi admin' : 'Menunggu verifikasi'}
-                      </span>
+                <article className="rounded-2xl border border-white/[0.08] bg-[#111114] p-5">
+                  <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/[0.07] pb-4">
+                    <div>
+                      <span className="font-mono text-xs font-bold text-red-300">{trackResult.code}</span>
+                      <h2 className="mt-1 font-semibold text-white">{trackResult.productTitle}</h2>
+                      <p className="mt-1 text-xs text-zinc-500">
+                        {trackResult.date ? new Date(trackResult.date).toLocaleString('id-ID') : ''}
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-emerald-300">{formatPrice(trackResult.amount)}</p>
                     </div>
+                    <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${
+                      trackResult.status === 'paid'
+                        ? 'border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300'
+                        : trackResult.status === 'failed' || trackResult.status === 'expired'
+                          ? 'border-red-500/20 bg-red-500/[0.08] text-red-300'
+                          : 'border-amber-500/20 bg-amber-500/[0.08] text-amber-300'
+                    }`}>
+                      {paymentStatusLabel(trackResult.status)}
+                    </span>
+                  </div>
+                  {trackResult.status !== 'paid' && (
                     <Button
                       as="a"
                       variant="success"
                       size="sm"
                       className="mt-4 h-10 w-full"
-                      href={whatsappUrl(activeWhatsApp, `Halo Admin, saya ingin konfirmasi ulang pesanan Invoice ${transaction.code} (${transaction.productTitle}).`)}
+                      href={whatsappUrl(activeWhatsApp, `Halo Admin, saya membutuhkan bantuan terkait Invoice ${trackResult.code} (${trackResult.productTitle}).`)}
                       target="_blank"
                       rel="noreferrer"
                     >
-                      <Headphones size={15} /> Konfirmasi via WhatsApp
+                      <Headphones size={15} /> Hubungi admin
                     </Button>
-                  </article>
-                )) : (
-                  <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-6 text-center text-sm text-zinc-400">
-                    Tidak ada pesanan ditemukan.
-                  </div>
-                )}
+                  )}
+                </article>
               </div>
             )}
           </section>
@@ -1431,28 +1484,39 @@ function App() {
                 <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.07] p-5">
                   <div>
                     <h2 className="text-sm font-semibold text-white">Riwayat transaksi</h2>
-                    <p className="mt-1 text-xs text-zinc-500">{transactions.length} transaksi tercatat</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {adminPayments.length} pembayaran server · {transactions.length} riwayat lokal lama
+                    </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" onClick={loadAdminPayments} disabled={adminPaymentsLoading}>
+                      <RefreshCw size={15} className={adminPaymentsLoading ? 'animate-spin' : ''} />
+                      {adminPaymentsLoading ? 'Memuat…' : 'Segarkan'}
+                    </Button>
                     <Button variant="secondary" size="sm" onClick={downloadTransactions}>
                       <ArrowDownToLine size={15} /> Unduh CSV
                     </Button>
                     {transactions.length > 0 && (
                       <Button variant="danger" size="sm" onClick={() => setClearTransactionsOpen(true)}>
-                        <Trash2 size={15} /> Hapus Semua Transaksi
+                        <Trash2 size={15} /> Hapus Riwayat Lokal
                       </Button>
                     )}
                   </div>
                 </div>
-                {transactions.length ? (
+                {adminPaymentsError && (
+                  <div role="alert" className="border-b border-red-500/15 bg-red-500/[0.05] p-4 text-xs text-red-200">
+                    {adminPaymentsError}
+                  </div>
+                )}
+                {adminTransactionRows.length ? (
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[720px] text-left text-xs">
                       <thead className="bg-white/[0.025] text-[10px] uppercase tracking-wider text-zinc-500">
                         <tr>{['Invoice', 'Tanggal', 'Pembeli', 'Produk', 'Total', 'Status', 'Aksi'].map((label) => <th key={label} className="px-4 py-3 font-semibold">{label}</th>)}</tr>
                       </thead>
                       <tbody className="divide-y divide-white/[0.06] text-zinc-300">
-                        {transactions.map((transaction, index) => (
-                          <tr key={`${transaction.code}-${index}`}>
+                        {adminTransactionRows.map((transaction, index) => (
+                          <tr key={`${transaction.code}-${transaction.source}-${index}`}>
                             <td className="px-4 py-4 font-mono font-semibold text-red-300">{transaction.code}</td>
                             <td className="px-4 py-4 text-zinc-500">{transaction.date}</td>
                             <td className="px-4 py-4">{transaction.customerName}<span className="mt-1 block text-[10px] text-zinc-500">{transaction.customerWA}</span></td>
@@ -1460,19 +1524,22 @@ function App() {
                             <td className="px-4 py-4 font-semibold text-emerald-300">{formatPrice(transaction.amount)}</td>
                             <td className="px-4 py-4">
                               <span className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-bold ${
-                                transaction.status === 'paid'
+                                transaction.status === 'paid' && transaction.fulfillmentStatus !== 'needs_attention'
                                   ? 'border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300'
-                                  : 'border-amber-500/20 bg-amber-500/[0.08] text-amber-300'
+                                  : transaction.status === 'paid' && transaction.fulfillmentStatus === 'needs_attention'
+                                    ? 'border-orange-500/20 bg-orange-500/[0.08] text-orange-300'
+                                  : transaction.status === 'failed' || transaction.status === 'expired'
+                                    ? 'border-red-500/20 bg-red-500/[0.08] text-red-300'
+                                    : transaction.status === 'legacy'
+                                      ? 'border-zinc-500/20 bg-zinc-500/[0.08] text-zinc-300'
+                                      : 'border-amber-500/20 bg-amber-500/[0.08] text-amber-300'
                               }`}>
-                                {transaction.status === 'paid' ? 'Terverifikasi' : 'Menunggu'}
+                                {transaction.status === 'paid' && transaction.fulfillmentStatus === 'needs_attention'
+                                  ? 'Terverifikasi · periksa stok'
+                                  : paymentStatusLabel(transaction.status)}
                               </span>
                             </td>
                             <td className="space-y-2 px-4 py-4">
-                              {transaction.status !== 'paid' && (
-                                <Button variant="success" size="sm" onClick={() => verifyTransaction(transaction.code)}>
-                                  <CheckCircle2 size={14} /> Verifikasi manual
-                                </Button>
-                              )}
                               <a className="block whitespace-nowrap font-semibold text-emerald-300 hover:text-emerald-200" href={whatsappUrl(transaction.customerWA, `Halo ${transaction.customerName}, terkait pesanan Invoice ${transaction.code} (${transaction.productTitle}).`)} target="_blank" rel="noreferrer">Chat pembeli</a>
                             </td>
                           </tr>
@@ -1480,7 +1547,7 @@ function App() {
                       </tbody>
                     </table>
                   </div>
-                ) : <p className="p-8 text-center text-sm text-zinc-500">Belum ada transaksi.</p>}
+                ) : <p className="p-8 text-center text-sm text-zinc-500">{adminPaymentsLoading ? 'Memuat transaksi…' : 'Belum ada transaksi.'}</p>}
               </section>
             )}
 
@@ -1655,7 +1722,7 @@ function App() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Hapus semua transaksi?</DialogTitle>
+            <DialogTitle>Hapus riwayat lokal?</DialogTitle>
             <DialogDescription>
               Tindakan ini akan menghapus seluruh {transactions.length} riwayat transaksi dari penyimpanan browser
               ini dan tidak dapat dibatalkan.
@@ -1675,7 +1742,7 @@ function App() {
               disabled={clearingTransactions}
             >
               <Trash2 size={15} />
-              {clearingTransactions ? 'Menghapus...' : 'Ya, Hapus Semua'}
+              {clearingTransactions ? 'Menghapus...' : 'Ya, Hapus Riwayat Lokal'}
             </Button>
           </div>
         </DialogContent>
@@ -1686,7 +1753,7 @@ function App() {
           <DialogHeader>
             <DialogTitle>Pembayaran QRIS</DialogTitle>
             <DialogDescription>
-              {checkoutProduct ? `${checkoutProduct.title} · ${formatPrice(checkoutProduct.price)}` : 'Selesaikan pesanan Anda.'}
+              {checkoutProduct ? `${checkoutProduct.title} · ${formatPrice(invoice?.amount ?? checkoutProduct.price)}` : 'Selesaikan pesanan Anda.'}
             </DialogDescription>
           </DialogHeader>
           {checkoutProduct && !qrisOpen && (
@@ -1726,71 +1793,92 @@ function App() {
                 <label htmlFor="customer-wa" className="text-xs font-semibold text-zinc-300">Nomor WhatsApp aktif *</label>
                 <input id="customer-wa" type="tel" required className={inputClass} value={customerWA} onChange={(event) => setCustomerWA(event.target.value)} placeholder="Contoh: 08123456789" />
               </div>
-              {qrisSourceError && (
+              {paymentStatusError && (
                 <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/[0.07] p-3 text-xs leading-relaxed text-red-200">
-                  {qrisSourceError}
+                  {paymentStatusError}
                 </p>
               )}
-              <Button className="w-full" type="submit" disabled={!staticQrisPayload || !qrisOpen}>
-                {!qrisOpen ? 'Toko sedang tutup' : staticQrisPayload ? 'Lanjut bayar via QRIS' : 'Memuat QRIS toko…'}
+              <Button className="w-full" type="submit" disabled={paymentCreating || !qrisOpen}>
+                {!qrisOpen ? 'Toko sedang tutup' : paymentCreating ? 'Menyiapkan QRIS…' : 'Lanjut bayar via QRIS'}
                 <ArrowRight size={16} />
               </Button>
             </form>
           )}
           {checkoutProduct && checkoutStep === 'qris' && invoice && (
             <div className="space-y-4 text-center">
-              <div className="rounded-xl border border-red-500/20 bg-red-500/[0.07] p-3 text-xs leading-5 text-red-100">
-                Scan QRIS dinamis ini menggunakan GoPay, OVO, DANA, ShopeePay, BCA, Mandiri, atau e-wallet lainnya. Nominal dikunci sesuai total pesanan.
-              </div>
-              <div className="mx-auto w-fit max-w-full rounded-3xl border-4 border-zinc-200 bg-white p-4 text-zinc-900 shadow-xl">
-                <div className="mb-3 flex items-center justify-center gap-1 text-xs font-black tracking-wider text-red-600"><QrCode size={15} /> QRIS NATIONAL</div>
-                <Suspense fallback={<div className="mx-auto h-[208px] w-[208px] animate-pulse rounded-lg bg-zinc-200" />}>
-                  <LazyQrCode
-                    id="dynamic-qris-code"
-                    value={dynamicQrisPayload}
-                    size={208}
-                    level="M"
-                    marginSize={2}
-                    bgColor="#ffffff"
-                    fgColor="#09090b"
-                    title={`QRIS dinamis sebesar ${formatPrice(invoice.amount)}`}
-                  />
-                </Suspense>
-                <p className="mt-3 text-[10px] font-semibold text-zinc-500">2AKINOSTORE DIGITAL</p>
-                <p className="mt-0.5 text-lg font-black">{formatPrice(invoice.amount)}</p>
-                <p className="font-mono text-[10px] text-zinc-400">{invoice.code}</p>
-              </div>
+              {invoice.status === 'pending' ? (
+                <>
+                  <div className="rounded-xl border border-red-500/20 bg-red-500/[0.07] p-3 text-xs leading-5 text-red-100">
+                    Scan QRIS dari Xendit menggunakan aplikasi pembayaran yang mendukung QRIS. Nominal dikunci di server sesuai harga katalog.
+                  </div>
+                  <div className="mx-auto w-fit max-w-full rounded-3xl border-4 border-zinc-200 bg-white p-4 text-zinc-900 shadow-xl">
+                    <div className="mb-3 flex items-center justify-center gap-1 text-xs font-black tracking-wider text-red-600"><QrCode size={15} /> QRIS NATIONAL</div>
+                    <Suspense fallback={<div className="mx-auto h-[208px] w-[208px] animate-pulse rounded-lg bg-zinc-200" />}>
+                      <LazyQrCode
+                        id="dynamic-qris-code"
+                        value={dynamicQrisPayload}
+                        size={208}
+                        level="M"
+                        marginSize={2}
+                        bgColor="#ffffff"
+                        fgColor="#09090b"
+                        title={`QRIS dinamis sebesar ${formatPrice(invoice.amount)}`}
+                      />
+                    </Suspense>
+                    <p className="mt-3 text-[10px] font-semibold text-zinc-500">2AKINOSTORE DIGITAL</p>
+                    <p className="mt-0.5 text-lg font-black">{formatPrice(invoice.amount)}</p>
+                    <p className="font-mono text-[10px] text-zinc-400">{invoice.code}</p>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-4 text-sm leading-relaxed text-amber-100">
+                  {invoice.status === 'review'
+                    ? 'Pembayaran membutuhkan pemeriksaan admin. Jangan lakukan pembayaran ulang sebelum mendapat arahan.'
+                    : `Status pembayaran: ${paymentStatusLabel(invoice.status)}. Jangan gunakan QRIS ini lagi.`}
+                </div>
+              )}
               <div className="flex items-center justify-between rounded-xl border border-white/[0.07] bg-white/[0.025] px-4 py-3 text-left">
                 <span className="text-xs text-zinc-500">Nomor invoice</span>
                 <span className="font-mono text-xs font-bold text-amber-300">{invoice.code}</span>
               </div>
-              <Button variant="success" className="w-full" onClick={confirmPayment} disabled={!qrisOpen}>
-                <CheckCircle2 size={16} /> {qrisOpen ? 'Saya sudah membayar' : 'Toko sedang tutup'}
-              </Button>
-              <p className="text-[10px] leading-relaxed text-zinc-500">Status tetap menunggu sampai admin memeriksa pembayaran masuk dan mencocokkan nominal.</p>
+              <p className={`text-xs font-semibold ${invoice.status === 'review' ? 'text-amber-300' : 'text-zinc-300'}`}>
+                Status: {paymentStatusLabel(invoice.status)}
+              </p>
+              {paymentStatusError && (
+                <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/[0.07] p-3 text-xs leading-relaxed text-red-200">
+                  {paymentStatusError}
+                </p>
+              )}
+              {invoice.status === 'pending' && (
+                <Button variant="success" className="w-full" onClick={confirmPayment} disabled={paymentChecking}>
+                  <CheckCircle2 size={16} /> {paymentChecking ? 'Memeriksa…' : 'Perbarui status pembayaran'}
+                </Button>
+              )}
+              {invoice.status !== 'paid' && invoice.status !== 'pending' && (
+                <Button
+                  as="a"
+                  variant="secondary"
+                  className="w-full"
+                  href={whatsappUrl(activeWhatsApp, `Halo Admin, mohon bantuan untuk Invoice ${invoice.code} (${invoice.productTitle}) dengan status ${paymentStatusLabel(invoice.status)}.`)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Headphones size={16} /> Hubungi admin
+                </Button>
+              )}
+              <p className="text-[10px] leading-relaxed text-zinc-500">Status berubah otomatis setelah Xendit mengonfirmasi pembayaran melalui webhook.</p>
             </div>
           )}
           {checkoutProduct && checkoutStep === 'success' && invoice && (
             <div className="space-y-5">
               <div className="text-center">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-amber-500/20 bg-amber-500/10 text-amber-300"><CheckCircle2 size={28} /></div>
-                <h3 className="mt-4 text-lg font-bold text-white">Menunggu verifikasi admin</h3>
+                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-300"><CheckCircle2 size={28} /></div>
+                <h3 className="mt-4 text-lg font-bold text-white">Pembayaran terverifikasi</h3>
                 <p className="mt-1 text-xs text-zinc-400">Invoice <span className="font-mono font-bold text-amber-300">{invoice.code}</span></p>
               </div>
-              <div className="rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-4 text-xs leading-relaxed text-zinc-300">
-                <p className="mb-2 font-bold text-amber-300">Pembayaran belum diverifikasi</p>
-                Pesanan tidak ditandai lunas oleh tombol ini. Kirim bukti pembayaran kepada admin; status baru berubah setelah admin mencocokkan pembayaran masuk sebesar {formatPrice(invoice.amount)}.
+              <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4 text-xs leading-relaxed text-zinc-300">
+                Xendit telah mengonfirmasi pembayaran sebesar {formatPrice(invoice.amount)}. Admin akan memproses pesanan Anda.
               </div>
-              <Button
-                as="a"
-                variant="success"
-                className="w-full"
-                href={whatsappUrl(activeWhatsApp, `Halo Admin 2akinoStore, saya sudah melakukan pembayaran via QRIS dan meminta verifikasi manual.\n\nInvoice: ${invoice.code}\nProduk: ${invoice.productTitle}\nNama: ${invoice.customerName}\nTotal yang harus dibayar: ${formatPrice(invoice.amount)}\n\nBerikut saya kirimkan screenshot bukti pembayarannya. Mohon verifikasi pembayaran dan pesanan saya. Terima kasih!`)}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <Headphones size={18} /> Kirim bukti pembayaran ke WhatsApp
-              </Button>
               <Button variant="secondary" className="w-full" onClick={() => { setCheckoutProduct(null); setActiveTab('store'); }}>
                 Kembali ke toko
               </Button>
