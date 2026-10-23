@@ -32,6 +32,58 @@ button {
   cursor: pointer;
 }
 
+.star-border-button {
+  --star-color: #fb7185;
+  --star-glow: rgba(244, 63, 94, 0.5);
+}
+
+.star-border-button.star-border-neutral {
+  --star-color: #d4d4d8;
+  --star-glow: rgba(161, 161, 170, 0.38);
+}
+
+.star-border-button.star-border-green {
+  --star-color: #6ee7b7;
+  --star-glow: rgba(16, 185, 129, 0.45);
+}
+
+.star-border-button::before {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg 275deg,
+    var(--star-glow) 294deg,
+    var(--star-color) 303deg,
+    white 308deg,
+    var(--star-color) 313deg,
+    var(--star-glow) 322deg,
+    transparent 340deg 360deg
+  );
+  content: "";
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: star-border-orbit 3s linear infinite;
+  filter: drop-shadow(0 0 3px var(--star-glow));
+  pointer-events: none;
+}
+
+.star-border-button:hover::before {
+  filter: drop-shadow(0 0 5px var(--star-glow));
+}
+
+.star-border-button:disabled::before {
+  animation-play-state: paused;
+  opacity: 0.45;
+}
+
+.star-border-button:focus-visible {
+  box-shadow: 0 0 0 2px #09090b, 0 0 0 4px rgba(244, 63, 94, 0.7);
+}
+
 ::selection {
   color: white;
   background: #e50914;
@@ -157,6 +209,10 @@ input[type="search"]::-webkit-search-results-decoration {
 
 @keyframes shimmer {
   to { background-position: -220% 0; }
+}
+
+@keyframes star-border-orbit {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes aurora {

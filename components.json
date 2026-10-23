@@ -1,5 +1,6 @@
 {
   "registries": {
-    "@acme": "https://acme.com/r/{name}.json"
+    "@acme": "https://acme.com/r/{name}.json",
+    "@react-bits": "https://reactbits.dev/r/{name}.json"
   }
 }

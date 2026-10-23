@@ -289,14 +289,15 @@ const HeroSection = memo(function HeroSection({ whatsappNumber }) {
           <Button onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}>
             Lihat katalog <ArrowRight size={16} />
           </Button>
-          <a
+          <Button
+            as="a"
+            variant="secondary"
             href={whatsappUrl(whatsappNumber, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
             target="_blank"
             rel="noreferrer"
-            className="inline-flex h-11 items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-5 text-sm font-semibold text-zinc-200 transition hover:bg-white/[0.07]"
           >
             <Headphones size={16} /> Hubungi admin
-          </a>
+          </Button>
         </div>
         <div className="mt-9 flex flex-wrap gap-x-7 gap-y-3 border-t border-white/10 pt-5 text-xs text-zinc-400">
           <span className="flex items-center gap-2"><ShieldCheck size={15} className="text-emerald-400" /> Pilihan terkurasi</span>
@@ -1207,14 +1208,17 @@ function App() {
                         {transaction.status === 'paid' ? 'Terverifikasi admin' : 'Menunggu verifikasi'}
                       </span>
                     </div>
-                    <a
-                      className="mt-4 flex h-10 items-center justify-center gap-2 rounded-xl bg-emerald-600 text-xs font-bold text-white transition hover:bg-emerald-500"
+                    <Button
+                      as="a"
+                      variant="success"
+                      size="sm"
+                      className="mt-4 h-10 w-full"
                       href={whatsappUrl(activeWhatsApp, `Halo Admin, saya ingin konfirmasi ulang pesanan Invoice ${transaction.code} (${transaction.productTitle}).`)}
                       target="_blank"
                       rel="noreferrer"
                     >
                       <Headphones size={15} /> Konfirmasi via WhatsApp
-                    </a>
+                    </Button>
                   </article>
                 )) : (
                   <div className="rounded-2xl border border-white/[0.07] bg-white/[0.025] p-6 text-center text-sm text-zinc-400">
@@ -1531,16 +1535,19 @@ function App() {
         </div>
       </footer>
 
-      <a
+      <Button
+        as="a"
+        variant="success"
+        size="icon"
         href={whatsappUrl(activeWhatsApp, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
         target="_blank"
         rel="noreferrer"
         aria-label="Hubungi admin melalui WhatsApp"
-        className="fixed bottom-5 right-5 z-30 flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500 text-white shadow-xl shadow-emerald-950/40 transition hover:scale-105 hover:bg-emerald-400 motion-safe:transition-transform"
+        className="fixed bottom-5 right-5 z-30 h-12 w-12 rounded-full shadow-xl shadow-emerald-950/40 hover:scale-105 motion-safe:transition-transform"
         style={{ bottom: 'calc(1.25rem + env(safe-area-inset-bottom))', right: 'calc(1.25rem + env(safe-area-inset-right))' }}
       >
         <Headphones size={20} />
-      </a>
+      </Button>
 
       <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
         <DialogContent className="max-w-sm">
@@ -1777,14 +1784,16 @@ function App() {
                 <p className="mb-2 font-bold text-amber-300">Pembayaran belum diverifikasi</p>
                 Pesanan tidak ditandai lunas oleh tombol ini. Kirim bukti pembayaran kepada admin; status baru berubah setelah admin mencocokkan pembayaran masuk sebesar {formatPrice(invoice.amount)}.
               </div>
-              <a
-                className="flex h-12 items-center justify-center gap-2 rounded-xl bg-emerald-600 text-sm font-bold text-white transition hover:bg-emerald-500"
+              <Button
+                as="a"
+                variant="success"
+                className="w-full"
                 href={whatsappUrl(activeWhatsApp, `Halo Admin 2akinoStore, saya sudah melakukan pembayaran via QRIS dan meminta verifikasi manual.\n\nInvoice: ${invoice.code}\nProduk: ${invoice.productTitle}\nNama: ${invoice.customerName}\nTotal yang harus dibayar: ${formatPrice(invoice.amount)}\n\nBerikut saya kirimkan screenshot bukti pembayarannya. Mohon verifikasi pembayaran dan pesanan saya. Terima kasih!`)}
                 target="_blank"
                 rel="noreferrer"
               >
                 <Headphones size={18} /> Kirim bukti pembayaran ke WhatsApp
-              </a>
+              </Button>
               <Button variant="secondary" className="w-full" onClick={() => { setCheckoutProduct(null); setActiveTab('store'); }}>
                 Kembali ke toko
               </Button>
