@@ -40,7 +40,8 @@ import {
   Tv,
   WalletCards,
 } from 'lucide-react';
-import qrisImage from '../DANA.jpeg';import { Button } from './components/ui/button.jsx';
+import qrisImage from '../DANA.jpeg';
+import { Button } from './components/ui/button.jsx';
 import {
   Dialog,
   DialogContent,
@@ -286,7 +287,10 @@ const HeroSection = memo(function HeroSection({ whatsappNumber }) {
           Temukan akun streaming dan aplikasi digital favoritmu. Pembayaran QRIS, dibantu admin melalui WhatsApp.
         </p>
         <div className="mt-7 flex flex-wrap gap-3">
-          <Button onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}>
+          <Button
+            onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}
+            aria-label="Lihat katalog produk"
+          >
             Lihat katalog <ArrowRight size={16} />
           </Button>
           <Button
