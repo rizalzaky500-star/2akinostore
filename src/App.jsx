@@ -300,6 +300,7 @@ const HeroSection = memo(function HeroSection({ whatsappNumber }) {
             href={whatsappUrl(whatsappNumber, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
             target="_blank"
             rel="noreferrer"
+            className="ml-auto"
           >
             <Headphones size={16} /> Hubungi admin
           </Button>
