@@ -24,7 +24,7 @@ let cachedClient = null;
  * Reuses one MongoClient across warm serverless invocations. Creating a
  * client per request exhausts the connection pool under load.
  */
-export async function getDb() {
+export async function getMongoClient() {
   if (!cachedClient) {
     const uri = process.env.MONGODB_URI;
     if (!uri) {
@@ -33,7 +33,12 @@ export async function getDb() {
     cachedClient = new MongoClient(uri, CLIENT_OPTIONS);
     await cachedClient.connect();
   }
-  return cachedClient.db(DB_NAME);
+  return cachedClient;
+}
+
+export async function getDb() {
+  const client = await getMongoClient();
+  return client.db(DB_NAME);
 }
 
 async function adminCollection() {

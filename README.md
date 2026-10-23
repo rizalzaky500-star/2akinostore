@@ -106,27 +106,37 @@ payload is not generated, and a notice explains when the store reopens:
 > Pembayaran QRIS hanya tersedia pukul 07.00–20.00 WIB. Silakan kembali saat jam operasional.
 
 The rule is anchored to the `Asia/Jakarta` timezone, not the visitor's device
-clock, so it behaves the same for customers in any timezone. Admin manual
-verification is deliberately **not** restricted: an admin may confirm a payment
-that genuinely arrived during operating hours.
+clock, so it behaves the same for customers in any timezone.
 
-**This check is advisory.** The rule lives in `src/lib/operatingHours.js` and is
-enforced at every QRIS entry point in the app, but this is a static site with no
-server, so a user who edits the page in their browser can bypass it. Treat it as
-a usability guardrail, not a security control. Enforcing the window so it
-cannot be bypassed requires a backend that validates transactions server-side;
-`assertQrisOpen()` is kept pure and free of browser APIs so that a future server
-can call the exact same function.
+**The opening-hours check is advisory.** It lives in
+`src/lib/operatingHours.js` and is enforced by the checkout UI, but is not a
+payment-security control. Payment amounts and settlement status are validated
+server-side by the Xendit integration below.
 
-## QRIS payment limitation
+## Xendit QRIS payments
 
-Checkout creates a dynamic EMVCo QR payload locally from the configured static
-QRIS image and inserts the exact order amount. The customer confirmation button
-only records a pending order. An admin must check the merchant account and
-manually verify receipt before marking the order paid. This static-site
-implementation has no acquirer API, server-side webhook, automatic payment
-status, or shared order database; do not treat browser-local verification as
-provider-confirmed settlement.
+Checkout creates a one-off QRIS Payment Request with Xendit. The browser sends
+only the product ID and customer details; the API reads the current price from
+MongoDB and stores the order in the `payments` collection before returning the
+QR. A payment is marked paid only after a valid Xendit `payment.capture`
+callback with the expected reference, payment request, IDR currency, and full
+amount. The webhook callback token is compared in constant time, duplicate
+callbacks are idempotent, and finite stock is decremented in the same MongoDB
+transaction as the paid-state update. Failures, expiry, and mismatched capture
+details do not mark an order paid.
+
+Before accepting live payments, configure these server-only variables in the
+deployment environment (or `.env.local` for `npx vercel dev`):
+
+- `XENDIT_SECRET_KEY`: Xendit API key. Use a test-mode key while validating.
+- `XENDIT_WEBHOOK_TOKEN`: the callback token configured in Xendit.
+
+Configure the Xendit Payments API webhook URL as
+`https://<your-domain>/api/payments/webhook` and subscribe to
+`payment.capture`, `payment.failure`, and `payment_request.expiry`. The API key
+and callback token must never use a `VITE_` prefix or be committed to Git.
+Orders from the earlier browser-only flow remain as local legacy history and
+are not treated as Xendit-verified transactions.
 
 ## MongoDB catalog and admin credentials
 
@@ -134,7 +144,8 @@ MongoDB Atlas stores categories, products, stock, and purchase guides alongside
 the admin credential. Catalog documents live in the `categories` and
 `products` collections; the admin password is a salted scrypt hash in
 `admin_credentials`. Only the Vercel API functions connect to the database.
-Transactions and the WhatsApp setting continue to use browser `localStorage`.
+New payment orders live in MongoDB; the WhatsApp setting and pre-integration
+legacy transaction history remain in browser `localStorage`.
 
 Credentials live in `.env` / `.env.local` (both gitignored). Copy `.env.example`
 and fill it in, or paste the values from the Atlas onboarding screen:
@@ -226,7 +237,8 @@ until you do.
 
 Because the browser never sees the hash or the connection string:
 
-- `MONGODB_URI` and `ADMIN_SESSION_SECRET` are **server-only** environment
+- `MONGODB_URI`, `ADMIN_SESSION_SECRET`, `XENDIT_SECRET_KEY`, and
+  `XENDIT_WEBHOOK_TOKEN` are **server-only** environment
   variables. Never prefix them with `VITE_`, or Vite inlines them into the
   client bundle and publishes your database credentials.
 - There is **no client-side password fallback**. A previous version kept a copy
@@ -246,12 +258,14 @@ Beyond the signed cookie, the API rejects requests that cannot have come from
 the storefront:
 
 - **Origin check.** Every state-changing route (`login`, `logout`, `password`,
-  and all `/api/admin/catalog/*` writes) compares the `Origin` header against
+  `/api/payments/create`, and all `/api/admin/catalog/*` writes) compares the `Origin` header against
   the forwarded host and protocol. A cross-site request is answered `403` even
   if it somehow carries a valid cookie.
 - **Login rate limiting.** `POST /api/admin/login` allows 5 attempts per minute
   and 20 attempts per 15 minutes per client address, then answers `429` with a
   `Retry-After` header. Successful logins reset that client's counters.
+- **Payment creation rate limiting.** `POST /api/payments/create` allows 8
+  requests per minute per client address to limit accidental duplicate orders.
 - **Bounded bodies.** JSON bodies are capped at 64 KB and must be sent as
   `application/json`; passwords over 200 characters are rejected before hashing.
 - **Headers.** A strict CSP (`script-src 'self'`, no inline scripts, no framing)
@@ -273,11 +287,8 @@ the storefront:
 The storefront keeps interactions smooth on desktop and mobile by avoiding
 avoidable work:
 
-- The bundled static QRIS image is optimized to a fraction of its former size.
-  Keep `DANA.jpeg` scannable when it is replaced: the app reads its payload with
-  ZXing, so the QR must remain legible after any resize or recompression.
-- The QRIS payload is decoded only when a customer starts a checkout, not on
-  page load, so the ZXing decoder is not part of the initial render cost.
+- The static QRIS image is no longer part of checkout; the QR payload comes
+  directly from the server-created Xendit Payment Request.
 - The MongoDB catalog is fetched once on load. Catalog cards, the hero, and the
   service highlights are memoized so typing in search or editing admin fields
   does not re-render unrelated markup.
@@ -289,9 +300,7 @@ avoidable work:
   JavaScript animation engine and its per-frame work from the bundle.
 - `qrcode.react` is loaded lazily and only when a checkout reaches the payment
   step, so the QR renderer is not part of the first paint.
-- `vite.config.js` splits vendors into stable chunks (React, Radix, icons, QR,
-  scanner). The ZXing scanner stays in its own lazy chunk and is fetched only
-  when the static QRIS image needs decoding.
+- `vite.config.js` splits vendors into stable chunks (React, Radix, icons, QR).
 - Product cards fade in with a CSS animation instead of a JavaScript-driven
   effect, and the decorative shimmer/aurora animations pause while the tab is
   hidden.
