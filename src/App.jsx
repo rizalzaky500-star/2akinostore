@@ -42,6 +42,7 @@ import {
 } from 'lucide-react';
 import qrisImage from '../DANA.jpeg';
 import { Button } from './components/ui/button.jsx';
+import RubberSegment from './components/RubberSegment.jsx';
 import {
   Dialog,
   DialogContent,
@@ -991,41 +992,33 @@ function App() {
             </span>
           </Button>
 
-          <nav className="flex shrink-0 items-center gap-1 rounded-xl border border-white/[0.07] bg-white/[0.025] p-1" aria-label="Navigasi utama">
-            {[
-              { id: 'store', label: 'Toko', icon: ShoppingBag },
-              { id: 'track', label: 'Cek Pesanan', icon: Search },
-            ].map(({ id, label, icon: Icon }) => (
-              <Button
-                key={id}
-                variant="unstyled"
-                size="none"
-                type="button"
-                onClick={() => setActiveTab(id)}
-                aria-label={label}
-                aria-current={activeTab === id ? 'page' : undefined}
-                className={`flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold transition max-[360px]:px-1 sm:px-3 ${
-                  activeTab === id ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-200'
-                }`}
-              >
-                <Icon size={15} />
-                <span className="hidden sm:inline">{label}</span>
-              </Button>
-            ))}
-            <Button
-              variant="unstyled"
-              size="none"
-              type="button"
-              onClick={openAdminAccess}
-              aria-label="Admin"
-              aria-current={activeTab === 'admin' ? 'page' : undefined}
-              className={`flex h-9 items-center gap-2 rounded-lg px-2 text-xs font-semibold transition max-[360px]:px-1 sm:px-3 ${
-                activeTab === 'admin' ? 'bg-white/10 text-white' : 'text-zinc-500 hover:text-zinc-200'
-              }`}
-            >
-              <Settings2 size={15} />
-              <span className="hidden sm:inline">Admin</span>
-            </Button>
+          <nav className="min-w-0" aria-label="Navigasi utama">
+            <RubberSegment
+              items={[
+                { value: 'store', label: 'Toko', icon: <ShoppingBag size={14} /> },
+                { value: 'track', label: 'Pesanan', icon: <Search size={14} /> },
+                { value: 'admin', label: 'Admin', icon: <Settings2 size={14} /> },
+              ]}
+              value={activeTab}
+              onChange={(value) => {
+                if (value === 'admin') openAdminAccess();
+                else setActiveTab(value);
+              }}
+              trackColor="#27272a"
+              thumbColor="#fafafa"
+              textColor="#fafafa"
+              activeTextColor="#18181b"
+              size="md"
+              radius={10}
+              inset={3}
+              equalSlots
+              stretch={100}
+              squash={3}
+              speed={1}
+              glide={75}
+              draggable
+              aria-label="Navigasi utama"
+            />
           </nav>
         </div>
       </header>
