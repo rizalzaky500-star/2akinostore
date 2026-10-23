@@ -41,6 +41,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import qrisImage from '../DANA.jpeg';import { Button } from './components/ui/button.jsx';
+import StarBorder from './components/StarBorder.jsx';
 import {
   Dialog,
   DialogContent,
@@ -286,9 +287,26 @@ const HeroSection = memo(function HeroSection({ whatsappNumber }) {
           Temukan akun streaming dan aplikasi digital favoritmu. Pembayaran QRIS, dibantu admin melalui WhatsApp.
         </p>
         <div className="mt-7 flex flex-wrap gap-3">
-          <Button onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}>
+          <StarBorder
+            as="button"
+            color="#ffffff"
+            trailColor="#ffffff"
+            duration={4}
+            direction="clockwise"
+            stars={1}
+            trailLength={0.3}
+            thickness={1}
+            radius={12}
+            glow={0.6}
+            hover="lap"
+            sparkle={false}
+            clickPulse
+            theme="dark"
+            onClick={() => document.getElementById('catalog')?.scrollIntoView({ behavior: 'smooth' })}
+            aria-label="Lihat katalog produk"
+          >
             Lihat katalog <ArrowRight size={16} />
-          </Button>
+          </StarBorder>
           <a
             href={whatsappUrl(whatsappNumber, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
             target="_blank"
