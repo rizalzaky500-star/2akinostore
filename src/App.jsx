@@ -300,6 +300,7 @@ const HeroSection = memo(function HeroSection({ whatsappNumber }) {
             href={whatsappUrl(whatsappNumber, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
             target="_blank"
             rel="noreferrer"
+            className="ml-auto"
           >
             <Headphones size={16} /> Hubungi admin
           </Button>
@@ -1540,8 +1541,11 @@ function App() {
         target="_blank"
         rel="noreferrer"
         aria-label="Hubungi admin melalui WhatsApp"
-        className="fixed bottom-5 right-5 z-30 h-12 w-12 rounded-full shadow-xl shadow-emerald-950/40 hover:scale-105 motion-safe:transition-transform"
-        style={{ bottom: 'calc(1.25rem + env(safe-area-inset-bottom))', right: 'calc(1.25rem + env(safe-area-inset-right))' }}
+        className="fixed bottom-4 right-4 z-30 h-12 w-12 rounded-full shadow-xl shadow-emerald-950/40 hover:scale-105 motion-safe:transition-transform sm:bottom-6 sm:right-6"
+        style={{
+          bottom: 'max(clamp(1rem, 2vw, 1.5rem), env(safe-area-inset-bottom))',
+          right: 'max(clamp(1rem, 2vw, 1.5rem), env(safe-area-inset-right))',
+        }}
       >
         <Headphones size={20} />
       </Button>
