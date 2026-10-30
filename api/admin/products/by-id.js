@@ -18,7 +18,9 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'POST') {
-      const product = await decrementStock(id);
+      const body = await readJsonBody(req).catch(() => ({}));
+      const count = body?.count ?? 1;
+      const product = await decrementStock(id, count);
       if (!product) return sendJson(res, 404, { error: 'Produk tidak ditemukan.' });
       return sendJson(res, 200, { product });
     }

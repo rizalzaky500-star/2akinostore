@@ -45,14 +45,18 @@ export function removeEmptyCategory(categories, products, categoryName) {
   return categories.filter((category) => category.name.toLocaleLowerCase() !== categoryName.toLocaleLowerCase());
 }
 
-export function decrementProductStock(products, productId) {
+export function decrementProductStock(products, productId, count = 1) {
   const product = products.find((item) => item.id === productId);
   if (!product) return products;
   if (product.stock == null) return products;
-  if (!Number.isSafeInteger(product.stock) || product.stock < 1) {
+  const decrementCount = Number(count);
+  if (!Number.isSafeInteger(decrementCount) || decrementCount < 1) {
+    throw new Error('Jumlah pengurangan stok tidak valid.');
+  }
+  if (!Number.isSafeInteger(product.stock) || product.stock < decrementCount) {
     throw new Error('Stok produk habis. Tambahkan stok sebelum memverifikasi pembayaran.');
   }
   return products.map((item) => (
-    item.id === productId ? { ...item, stock: item.stock - 1 } : item
+    item.id === productId ? { ...item, stock: item.stock - decrementCount } : item
   ));
 }

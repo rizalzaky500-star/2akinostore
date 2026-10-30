@@ -66,9 +66,14 @@ test('category deletion is blocked while products are assigned', () => {
 
 test('paid stock is decremented once while unlimited stock stays unlimited', () => {
   assert.deepEqual(decrementProductStock(products, 'one')[0].stock, 2);
+  assert.deepEqual(decrementProductStock(products, 'one', 2)[0].stock, 1);
   assert.equal(decrementProductStock(products, 'two')[1].stock, null);
   assert.throws(
     () => decrementProductStock([{ id: 'empty', stock: 0 }], 'empty'),
+    /Stok produk habis/,
+  );
+  assert.throws(
+    () => decrementProductStock([{ id: 'limited', stock: 2 }], 'limited', 3),
     /Stok produk habis/,
   );
 });

@@ -24,6 +24,7 @@ import {
   Headphones,
   KeyRound,
   LockKeyhole,
+  Minus,
   MonitorPlay,
   Music2,
   Package,
@@ -35,6 +36,7 @@ import {
   Settings2,
   ShieldCheck,
   ShoppingBag,
+  ShoppingCart,
   Sparkles,
   Trash2,
   Tv,
@@ -79,11 +81,21 @@ import {
   loginAdmin,
   logoutAdmin as logoutAdminRequest,
 } from './lib/adminAuth.js';
+import {
+  addToCart,
+  calculateCartTotals,
+  clearCart,
+  removeFromCart,
+  syncCartWithCatalog,
+  updateCartQuantity,
+  validateCartStock,
+} from './lib/cart.js';
 
 const STORAGE_KEY_CATS = '2akinostore_cats_v12';
 const STORAGE_KEY_PRODS = '2akinostore_products_v12';
 const STORAGE_KEY_TRANS = '2akinostore_transactions_v12';
 const STORAGE_KEY_SETTINGS = '2akinostore_settings_v12';
+const STORAGE_KEY_CART = '2akinostore_cart_v12';
 
 const defaultCategories = [
   { name: 'Netflix', icon: 'tv', color: 'text-red-400' },
@@ -222,7 +234,14 @@ function whatsappUrl(number, message) {
   return `https://wa.me/${cleanNumber}?text=${encodeURIComponent(message)}`;
 }
 
-const ProductCard = memo(function ProductCard({ product, index, onCheckout, qrisOpen }) {
+const ProductCard = memo(function ProductCard({
+  product,
+  index,
+  onCheckout,
+  onAddToCart,
+  cartQuantity = 0,
+  qrisOpen,
+}) {
   const soldOut = product.stock === 0;
   const orderable = !soldOut && qrisOpen;
   return (
@@ -255,15 +274,41 @@ const ProductCard = memo(function ProductCard({ product, index, onCheckout, qris
           <p className="text-[10px] uppercase tracking-wider text-zinc-500">Mulai dari</p>
           <p className="mt-1 text-lg font-bold tracking-tight text-white">{formatPrice(product.price)}</p>
         </div>
-        <Button
-          size="sm"
-          onClick={() => onCheckout(product)}
-          className="shrink-0"
-          disabled={!orderable}
-          title={!qrisOpen && !soldOut ? STORE_CLOSED_MESSAGE : undefined}
-        >
-          {soldOut ? 'Habis' : !qrisOpen ? 'Tutup' : <>Beli <ArrowRight size={14} /></>}
-        </Button>
+        <div className="flex items-center gap-2">
+          {onAddToCart && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => onAddToCart(product)}
+              className="relative shrink-0"
+              disabled={!orderable || (product.stock != null && cartQuantity >= product.stock)}
+              title={
+                soldOut
+                  ? 'Stok habis'
+                  : product.stock != null && cartQuantity >= product.stock
+                    ? 'Maksimal stok tercapai'
+                    : 'Tambah ke keranjang'
+              }
+              aria-label={`Tambah ${product.title} ke keranjang`}
+            >
+              <ShoppingCart size={15} />
+              {cartQuantity > 0 && (
+                <span className="ml-1 rounded-full bg-red-600 px-1.5 py-0.2 text-[10px] font-bold text-white">
+                  {cartQuantity}
+                </span>
+              )}
+            </Button>
+          )}
+          <Button
+            size="sm"
+            onClick={() => onCheckout(product)}
+            className="shrink-0"
+            disabled={!orderable}
+            title={!qrisOpen && !soldOut ? STORE_CLOSED_MESSAGE : undefined}
+          >
+            {soldOut ? 'Habis' : !qrisOpen ? 'Tutup' : <>Beli <ArrowRight size={14} /></>}
+          </Button>
+        </div>
       </div>
     </article>
   );
@@ -372,7 +417,10 @@ function App() {
   const [clearTransactionsOpen, setClearTransactionsOpen] = useState(false);
   const [clearingTransactions, setClearingTransactions] = useState(false);
   const [editingProductId, setEditingProductId] = useState(null);
-  const [checkoutProduct, setCheckoutProduct] = useState(null);
+  const [cart, setCart] = useState(() => readStorage(STORAGE_KEY_CART, []));
+  const [cartOpen, setCartOpen] = useState(false);
+  const [checkoutData, setCheckoutData] = useState(null);
+  const checkoutProduct = checkoutData?.items?.[0] || null;
   const [checkoutStep, setCheckoutStep] = useState('form');
   const [invoice, setInvoice] = useState(null);
   const [staticQrisPayload, setStaticQrisPayload] = useState('');
@@ -451,10 +499,22 @@ function App() {
     }
   }, [settings]);
   useEffect(() => {
+    if (persistedKeys.current.has(STORAGE_KEY_CART)) {
+      localStorage.setItem(STORAGE_KEY_CART, JSON.stringify(cart));
+    } else {
+      persistedKeys.current.add(STORAGE_KEY_CART);
+    }
+  }, [cart]);
+  useEffect(() => {
+    if (products.length > 0) {
+      setCart((current) => syncCartWithCatalog(current, products));
+    }
+  }, [products]);
+  useEffect(() => {
     // Decode the store's static QRIS image only when a checkout actually needs
     // it. This keeps the (large) zxing decoder out of the initial load budget
     // and stops it from competing with first paint.
-    if (!checkoutProduct || staticQrisPayload || qrisSourceError) return undefined;
+    if (!checkoutData || staticQrisPayload || qrisSourceError) return undefined;
 
     let cancelled = false;
     import('@zxing/browser')
@@ -471,7 +531,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [checkoutProduct, staticQrisPayload, qrisSourceError]);
+  }, [checkoutData, staticQrisPayload, qrisSourceError]);
   useEffect(() => {
     if (!notice) return undefined;
     const timeout = window.setTimeout(() => setNotice(''), 3200);
@@ -518,6 +578,12 @@ function App() {
   }, [trackQuery, transactions]);
 
   const qrisOpen = isQrisOpen(now);
+
+  const cartTotals = useMemo(() => calculateCartTotals(cart, products), [cart, products]);
+  const cartItemMap = useMemo(
+    () => new Map(cart.map((item) => [item.productId, item.quantity])),
+    [cart],
+  );
 
   const checkoutGuide = useMemo(
     () => resolvePurchaseGuide(checkoutProduct, categories),
@@ -595,18 +661,109 @@ function App() {
     setNotice('Anda telah keluar dari akses admin.');
   }
 
+  const handleAddToCart = useCallback((product) => {
+    setCart((current) => {
+      const result = addToCart(current, product, 1);
+      if (!result.success) {
+        setNotice(result.error);
+        return current;
+      }
+      setNotice(`"${product.title}" ditambahkan ke keranjang.`);
+      return result.cart;
+    });
+  }, []);
+
+  const handleUpdateCartQuantity = useCallback((productId, quantity) => {
+    const product = products.find((p) => p.id === productId);
+    setCart((current) => {
+      const result = updateCartQuantity(current, productId, quantity, product?.stock);
+      if (!result.success) {
+        setNotice(result.error);
+        return current;
+      }
+      return result.cart;
+    });
+  }, [products]);
+
+  const handleRemoveFromCart = useCallback((productId) => {
+    const item = cart.find((i) => i.productId === productId);
+    setCart((current) => removeFromCart(current, productId));
+    if (item) {
+      setNotice(`"${item.title}" dihapus dari keranjang.`);
+    }
+  }, [cart]);
+
+  const handleClearCart = useCallback(() => {
+    setCart([]);
+    setNotice('Keranjang belanja dikosongkan.');
+  }, []);
+
   const startCheckout = useCallback((product) => {
     if (!isQrisOpen(new Date())) {
       setNotice(STORE_CLOSED_MESSAGE);
       return;
     }
-    setCheckoutProduct(product);
+    if (product.stock === 0) {
+      setNotice(`Stok produk "${product.title}" habis.`);
+      return;
+    }
+    const guide = resolvePurchaseGuide(product, categories);
+    setCheckoutData({
+      mode: 'direct',
+      items: [{
+        productId: product.id,
+        title: product.title,
+        price: product.price,
+        duration: product.duration,
+        icon: product.icon,
+        quantity: 1,
+        subtotal: product.price,
+      }],
+      totalAmount: product.price,
+      guides: guide ? [{ title: product.title, guide }] : [],
+    });
     setCheckoutStep('form');
     setInvoice(null);
     setDynamicQrisPayload('');
     setCustomerName('');
     setCustomerWA('');
-  }, []);
+  }, [categories]);
+
+  const startCartCheckout = useCallback(() => {
+    if (!isQrisOpen(new Date())) {
+      setNotice(STORE_CLOSED_MESSAGE);
+      return;
+    }
+    if (cart.length === 0) {
+      setNotice('Keranjang belanja masih kosong.');
+      return;
+    }
+    const stockValidation = validateCartStock(cart, products);
+    if (!stockValidation.isValid) {
+      setNotice(stockValidation.error);
+      return;
+    }
+    const guides = cartTotals.items
+      .map((item) => {
+        const prod = products.find((p) => p.id === item.productId);
+        const guide = resolvePurchaseGuide(prod || item, categories);
+        return guide ? { title: item.title, guide } : null;
+      })
+      .filter(Boolean);
+
+    setCheckoutData({
+      mode: 'cart',
+      items: cartTotals.items,
+      totalAmount: cartTotals.totalAmount,
+      guides,
+    });
+    setCartOpen(false);
+    setCheckoutStep('form');
+    setInvoice(null);
+    setDynamicQrisPayload('');
+    setCustomerName('');
+    setCustomerWA('');
+  }, [cart, products, cartTotals, categories]);
 
   function processToQRIS(event) {
     event.preventDefault();
@@ -614,7 +771,7 @@ function App() {
       setNotice('Mohon isi nama lengkap dan nomor WhatsApp Anda.');
       return;
     }
-    if (!checkoutProduct) return;
+    if (!checkoutData || !checkoutData.items.length) return;
     if (!isQrisOpen(new Date())) {
       setNotice(STORE_CLOSED_MESSAGE);
       return;
@@ -624,20 +781,48 @@ function App() {
       return;
     }
 
+    if (checkoutData.mode === 'cart') {
+      const stockCheck = validateCartStock(checkoutData.items, products);
+      if (!stockCheck.isValid) {
+        setNotice(stockCheck.error);
+        return;
+      }
+    } else {
+      const singleProduct = products.find((p) => p.id === checkoutData.items[0].productId);
+      if (singleProduct && singleProduct.stock === 0) {
+        setNotice(`Stok produk "${singleProduct.title}" sudah habis.`);
+        return;
+      }
+    }
+
     setQrisSourceError('');
     try {
-      const dynamicPayload = createDynamicQris(staticQrisPayload, checkoutProduct.price);
-      if (validateQrisPayload(dynamicPayload) !== checkoutProduct.price) {
+      const dynamicPayload = createDynamicQris(staticQrisPayload, checkoutData.totalAmount);
+      if (validateQrisPayload(dynamicPayload) !== checkoutData.totalAmount) {
         throw new Error('Nominal pada QRIS tidak sesuai dengan total pesanan.');
       }
+      const summaryTitle =
+        checkoutData.items.length === 1
+          ? `${checkoutData.items[0].title}${checkoutData.items[0].quantity > 1 ? ` (x${checkoutData.items[0].quantity})` : ''}`
+          : `${checkoutData.items[0].title} (x${checkoutData.items[0].quantity}) + ${checkoutData.items.length - 1} produk lainnya`;
+
       const nextInvoice = {
         code: `INV-${Math.floor(100000 + Math.random() * 900000)}`,
         date: new Date().toLocaleString('id-ID'),
         customerName: customerName.trim(),
         customerWA: customerWA.trim(),
-        productId: checkoutProduct.id,
-        productTitle: checkoutProduct.title,
-        amount: checkoutProduct.price,
+        items: checkoutData.items.map((item) => ({
+          productId: item.productId,
+          productTitle: item.title,
+          price: item.price,
+          duration: item.duration || '',
+          icon: item.icon || 'tv',
+          quantity: item.quantity,
+          subtotal: item.subtotal ?? item.price * item.quantity,
+        })),
+        productId: checkoutData.items.length === 1 ? checkoutData.items[0].productId : 'multi',
+        productTitle: summaryTitle,
+        amount: checkoutData.totalAmount,
         status: 'pending',
       };
       setInvoice(nextInvoice);
@@ -656,28 +841,67 @@ function App() {
       return;
     }
     setTransactions((current) => [invoice, ...current]);
+    if (checkoutData?.mode === 'cart') {
+      setCart([]);
+    }
     setCheckoutStep('success');
+  }
+
+  function getWhatsAppConfirmationUrl(inv) {
+    if (!inv) return '';
+    const itemList =
+      inv.items && inv.items.length > 0
+        ? inv.items
+            .map(
+              (item) =>
+                `- ${item.productTitle} (x${item.quantity}) : ${formatPrice(item.subtotal ?? item.price * item.quantity)}`,
+            )
+            .join('\n')
+        : `- ${inv.productTitle} : ${formatPrice(inv.amount)}`;
+
+    const text = `Halo Admin 2akinoStore, saya sudah melakukan pembayaran via QRIS dan meminta verifikasi manual.\n\nInvoice: ${inv.code}\nDetail Pesanan:\n${itemList}\n\nNama: ${inv.customerName}\nTotal yang harus dibayar: ${formatPrice(inv.amount)}\n\nBerikut saya kirimkan screenshot bukti pembayarannya. Mohon verifikasi pembayaran dan pesanan saya. Terima kasih!`;
+    return whatsappUrl(activeWhatsApp, text);
   }
 
   async function verifyTransaction(invoiceCode) {
     const transaction = transactions.find((item) => item.code === invoiceCode);
     if (!transaction || transaction.status === 'paid') return;
-    const product = products.find((item) => item.id === transaction.productId);
-    if (!product) {
-      setNotice('Produk pada transaksi tidak ditemukan di katalog.');
-      return;
+
+    const itemsToConsume =
+      transaction.items && transaction.items.length > 0
+        ? transaction.items
+        : [{ productId: transaction.productId, quantity: 1, productTitle: transaction.productTitle }];
+
+    for (const item of itemsToConsume) {
+      const product = products.find((p) => p.id === item.productId);
+      if (!product) {
+        setNotice(`Produk "${item.productTitle}" tidak ditemukan di katalog.`);
+        return;
+      }
+      if (product.stock === 0) {
+        setNotice(`Stok produk "${product.title}" habis. Tambahkan stok sebelum memverifikasi pembayaran.`);
+        return;
+      }
+      if (product.stock != null && product.stock < item.quantity) {
+        setNotice(
+          `Stok produk "${product.title}" tidak mencukupi (tersedia: ${product.stock}, dibutuhkan: ${item.quantity}).`,
+        );
+        return;
+      }
     }
-    if (product.stock === 0) {
-      setNotice('Stok produk habis. Tambahkan stok sebelum memverifikasi pembayaran.');
-      return;
-    }
+
     const confirmed = window.confirm(
       `Pastikan pembayaran ${formatPrice(transaction.amount)} untuk invoice ${transaction.code} sudah diterima di akun QRIS merchant. Lanjutkan verifikasi manual?`,
     );
     if (!confirmed) return;
+
     try {
-      const updatedProduct = await consumeCatalogProductStock(transaction.productId);
-      setProducts((current) => current.map((item) => (item.id === updatedProduct.id ? updatedProduct : item)));
+      let updatedProducts = [...products];
+      for (const item of itemsToConsume) {
+        const updated = await consumeCatalogProductStock(item.productId, item.quantity);
+        updatedProducts = updatedProducts.map((p) => (p.id === updated.id ? updated : p));
+      }
+      setProducts(updatedProducts);
       setTransactions((current) =>
         current.map((item) =>
           item.code === invoiceCode
@@ -927,15 +1151,21 @@ function App() {
     }
     const rows = [
       ['Invoice', 'Tanggal', 'Nama Pembeli', 'Nomor WA', 'Produk', 'Total Harga', 'Status'],
-      ...transactions.map((transaction) => [
-        transaction.code,
-        transaction.date,
-        transaction.customerName,
-        transaction.customerWA,
-        transaction.productTitle,
-        transaction.amount,
-        transaction.status === 'paid' ? 'Terverifikasi admin' : 'Menunggu verifikasi admin',
-      ]),
+      ...transactions.map((transaction) => {
+        const productSummary =
+          transaction.items && transaction.items.length > 0
+            ? transaction.items.map((i) => `${i.productTitle} (x${i.quantity})`).join(', ')
+            : transaction.productTitle;
+        return [
+          transaction.code,
+          transaction.date,
+          transaction.customerName,
+          transaction.customerWA,
+          productSummary,
+          transaction.amount,
+          transaction.status === 'paid' ? 'Terverifikasi admin' : 'Menunggu verifikasi admin',
+        ];
+      }),
     ];
     const csv = rows
       .map((row) => row.map((cell) => `"${String(cell ?? '').replaceAll('"', '""')}"`).join(','))
@@ -993,34 +1223,52 @@ function App() {
             </span>
           </Button>
 
-          <nav className="min-w-0" aria-label="Navigasi utama">
-            <RubberSegment
-              items={[
-                { value: 'store', label: 'Toko', icon: <ShoppingBag size={14} /> },
-                { value: 'track', label: 'Pesanan', icon: <Search size={14} /> },
-                { value: 'admin', label: 'Admin', icon: <Settings2 size={14} /> },
-              ]}
-              value={activeTab}
-              onChange={(value) => {
-                if (value === 'admin') openAdminAccess();
-                else setActiveTab(value);
-              }}
-              trackColor="#27272a"
-              thumbColor="#fafafa"
-              textColor="#fafafa"
-              activeTextColor="#18181b"
-              size="md"
-              radius={10}
-              inset={3}
-              equalSlots
-              stretch={100}
-              squash={3}
-              speed={1}
-              glide={75}
-              draggable
-              aria-label="Navigasi utama"
-            />
-          </nav>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <nav className="min-w-0" aria-label="Navigasi utama">
+              <RubberSegment
+                items={[
+                  { value: 'store', label: 'Toko', icon: <ShoppingBag size={14} /> },
+                  { value: 'track', label: 'Pesanan', icon: <Search size={14} /> },
+                  { value: 'admin', label: 'Admin', icon: <Settings2 size={14} /> },
+                ]}
+                value={activeTab}
+                onChange={(value) => {
+                  if (value === 'admin') openAdminAccess();
+                  else setActiveTab(value);
+                }}
+                trackColor="#27272a"
+                thumbColor="#fafafa"
+                textColor="#fafafa"
+                activeTextColor="#18181b"
+                size="md"
+                radius={10}
+                inset={3}
+                equalSlots
+                stretch={100}
+                squash={3}
+                speed={1}
+                glide={75}
+                draggable
+                aria-label="Navigasi utama"
+              />
+            </nav>
+            <Button
+              variant="unstyled"
+              size="none"
+              type="button"
+              onClick={() => setCartOpen(true)}
+              className="relative flex h-10 items-center gap-2 rounded-xl border border-white/20 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:border-white/40 hover:bg-white/[0.08] hover:text-white"
+              aria-label={`Keranjang belanja, ${cartTotals.totalItems} item`}
+            >
+              <ShoppingCart size={16} />
+              <span className="hidden sm:inline">Keranjang</span>
+              {cartTotals.totalItems > 0 && (
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1.5 text-[11px] font-bold text-white shadow-sm">
+                  {cartTotals.totalItems}
+                </span>
+              )}
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -1122,6 +1370,8 @@ function App() {
                       product={product}
                       index={index}
                       onCheckout={startCheckout}
+                      onAddToCart={handleAddToCart}
+                      cartQuantity={cart.find((item) => item.id === product.id)?.quantity || 0}
                       qrisOpen={qrisOpen}
                     />
                   ))}
@@ -1197,6 +1447,20 @@ function App() {
                         <span className="font-mono text-xs font-bold text-red-300">{transaction.code}</span>
                         <h2 className="mt-1 font-semibold text-white">{transaction.productTitle}</h2>
                         <p className="mt-1 text-xs text-zinc-500">{transaction.date} · {transaction.customerName}</p>
+                        {transaction.items && transaction.items.length > 0 && (
+                          <div className="mt-2 space-y-1 rounded-xl border border-white/[0.06] bg-black/20 p-2.5 text-xs text-zinc-400">
+                            {transaction.items.map((item, idx) => (
+                              <div key={idx} className="flex items-center justify-between gap-2">
+                                <span className="truncate text-zinc-300">
+                                  {item.productTitle} <span className="text-zinc-500">x{item.quantity}</span>
+                                </span>
+                                <span className="font-semibold text-zinc-300">
+                                  {formatPrice(item.subtotal ?? item.price * item.quantity)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                       <span className={`rounded-full border px-3 py-1 text-[10px] font-bold uppercase tracking-wide ${
                         transaction.status === 'paid'
@@ -1457,7 +1721,16 @@ function App() {
                             <td className="px-4 py-4 font-mono font-semibold text-red-300">{transaction.code}</td>
                             <td className="px-4 py-4 text-zinc-500">{transaction.date}</td>
                             <td className="px-4 py-4">{transaction.customerName}<span className="mt-1 block text-[10px] text-zinc-500">{transaction.customerWA}</span></td>
-                            <td className="px-4 py-4">{transaction.productTitle}</td>
+                            <td className="px-4 py-4">
+                              <p className="font-medium text-white">{transaction.productTitle}</p>
+                              {transaction.items && transaction.items.length > 1 && (
+                                <ul className="mt-1 space-y-0.5 text-[11px] text-zinc-400">
+                                  {transaction.items.map((item, idx) => (
+                                    <li key={idx}>• {item.productTitle} (x{item.quantity})</li>
+                                  ))}
+                                </ul>
+                              )}
+                            </td>
                             <td className="px-4 py-4 font-semibold text-emerald-300">{formatPrice(transaction.amount)}</td>
                             <td className="px-4 py-4">
                               <span className={`whitespace-nowrap rounded-full border px-2.5 py-1 text-[10px] font-bold ${
@@ -1549,6 +1822,28 @@ function App() {
       >
         <Headphones size={20} />
       </Button>
+
+      {activeTab === 'store' && cartTotals.totalItems > 0 && (
+        <Button
+          type="button"
+          onClick={() => setCartOpen(true)}
+          className="fixed bottom-4 left-4 z-30 flex h-12 items-center gap-2.5 rounded-full border border-red-500/40 bg-zinc-900/95 px-4 text-xs font-semibold text-white shadow-xl shadow-red-950/40 backdrop-blur-md transition hover:scale-105 hover:bg-zinc-800 sm:bottom-6 sm:left-6"
+          style={{
+            bottom: 'max(clamp(1rem, 2vw, 1.5rem), env(safe-area-inset-bottom))',
+            left: 'max(clamp(1rem, 2vw, 1.5rem), env(safe-area-inset-left))',
+          }}
+          aria-label={`Buka keranjang belanja: ${cartTotals.totalItems} item (${formatPrice(cartTotals.totalAmount)})`}
+        >
+          <div className="relative">
+            <ShoppingCart size={18} className="text-red-400" />
+            <span className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full bg-red-600 text-[10px] font-bold text-white">
+              {cartTotals.totalItems}
+            </span>
+          </div>
+          <span className="hidden font-bold sm:inline">{formatPrice(cartTotals.totalAmount)}</span>
+          <span className="text-zinc-300">Keranjang</span>
+        </Button>
+      )}
 
       <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
         <DialogContent className="max-w-sm">
@@ -1685,30 +1980,215 @@ function App() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(checkoutProduct)} onOpenChange={(open) => !open && setCheckoutProduct(null)}>
+      <Dialog open={cartOpen} onOpenChange={setCartOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Pembayaran QRIS</DialogTitle>
+            <DialogTitle>Keranjang Belanja</DialogTitle>
             <DialogDescription>
-              {checkoutProduct ? `${checkoutProduct.title} · ${formatPrice(checkoutProduct.price)}` : 'Selesaikan pesanan Anda.'}
+              {cartTotals.totalCount > 0
+                ? `${cartTotals.totalCount} jenis produk (${cartTotals.totalItems} item total).`
+                : 'Keranjang belanja Anda masih kosong.'}
             </DialogDescription>
           </DialogHeader>
-          {checkoutProduct && !qrisOpen && (
+
+          {cartTotals.totalCount === 0 ? (
+            <div className="py-8 text-center">
+              <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] text-zinc-500">
+                <ShoppingCart size={22} />
+              </div>
+              <p className="text-sm font-medium text-zinc-300">Belum ada produk di keranjang</p>
+              <p className="mt-1 text-xs text-zinc-500">Pilih produk pada katalog lalu klik tombol keranjang.</p>
+              <Button variant="secondary" size="sm" className="mt-4" onClick={() => setCartOpen(false)}>
+                Lanjut Belanja
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="max-h-[50vh] space-y-3 overflow-y-auto pr-1">
+                {cartTotals.items.map((item) => {
+                  const product = products.find((p) => p.id === item.productId);
+                  const isOutOfStock = product && product.stock === 0;
+                  const isExceeded = product && product.stock != null && item.quantity > product.stock;
+
+                  return (
+                    <div
+                      key={item.productId}
+                      className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${
+                        isOutOfStock || isExceeded
+                          ? 'border-red-500/30 bg-red-500/[0.04]'
+                          : 'border-white/[0.07] bg-white/[0.02]'
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-3">
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-red-500/10 text-red-400">
+                          {iconFor(item.icon, 18)}
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-semibold text-white">{item.title}</p>
+                          <p className="text-[11px] text-zinc-500">{formatPrice(item.price)}</p>
+                          {(isOutOfStock || isExceeded) && (
+                            <p className="text-[10px] font-semibold text-red-400">
+                              {isOutOfStock ? 'Stok habis' : `Tersisa ${product.stock}`}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex shrink-0 items-center gap-2">
+                        <div className="flex items-center rounded-lg border border-white/10 bg-black/30">
+                          <Button
+                            variant="unstyled"
+                            size="none"
+                            type="button"
+                            className="flex h-7 w-7 items-center justify-center text-zinc-400 hover:text-white"
+                            onClick={() => handleUpdateCartQuantity(item.productId, item.quantity - 1)}
+                            aria-label={`Kurangi jumlah ${item.title}`}
+                          >
+                            <Minus size={13} />
+                          </Button>
+                          <span className="w-7 text-center font-mono text-xs font-bold text-white">
+                            {item.quantity}
+                          </span>
+                          <Button
+                            variant="unstyled"
+                            size="none"
+                            type="button"
+                            className="flex h-7 w-7 items-center justify-center text-zinc-400 hover:text-white disabled:opacity-30"
+                            onClick={() => handleUpdateCartQuantity(item.productId, item.quantity + 1)}
+                            disabled={Boolean(product && product.stock != null && item.quantity >= product.stock)}
+                            aria-label={`Tambah jumlah ${item.title}`}
+                          >
+                            <Plus size={13} />
+                          </Button>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-zinc-500 hover:text-red-400"
+                          onClick={() => handleRemoveFromCart(item.productId)}
+                          aria-label={`Hapus ${item.title} dari keranjang`}
+                        >
+                          <Trash2 size={13} />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="border-t border-white/[0.08] pt-3">
+                <div className="flex items-center justify-between text-xs text-zinc-400">
+                  <span>Total Produk</span>
+                  <span>{cartTotals.totalItems} item</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-sm font-bold text-white">
+                  <span>Total Pembayaran</span>
+                  <span className="text-base text-emerald-300">{formatPrice(cartTotals.totalAmount)}</span>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2 pt-2 sm:flex-row">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={handleClearCart}
+                  className="text-zinc-500 hover:text-red-400"
+                >
+                  <Trash2 size={14} /> Kosongkan
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={startCartCheckout}
+                  disabled={!qrisOpen || cartTotals.items.some((i) => {
+                    const p = products.find((prod) => prod.id === i.productId);
+                    return !p || p.stock === 0 || (p.stock != null && i.quantity > p.stock);
+                  })}
+                >
+                  {!qrisOpen ? 'Toko sedang tutup' : 'Checkout Sekarang'} <ArrowRight size={15} />
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(checkoutData)} onOpenChange={(open) => !open && setCheckoutData(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {checkoutData?.mode === 'cart' ? 'Pembayaran QRIS Keranjang' : 'Pembayaran QRIS'}
+            </DialogTitle>
+            <DialogDescription>
+              {checkoutData
+                ? checkoutData.items.length === 1
+                  ? `${checkoutData.items[0].title} · ${formatPrice(checkoutData.totalAmount)}`
+                  : `${checkoutData.items.length} jenis produk (${checkoutData.items.reduce((s, i) => s + i.quantity, 0)} item) · Total ${formatPrice(checkoutData.totalAmount)}`
+                : 'Selesaikan pesanan Anda.'}
+            </DialogDescription>
+          </DialogHeader>
+          {checkoutData && !qrisOpen && (
             <p role="alert" className="mb-4 flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/[0.07] p-3 text-xs leading-relaxed text-amber-100">
               <Clock3 size={15} className="mt-0.5 shrink-0 text-amber-300" aria-hidden="true" />
               {STORE_CLOSED_MESSAGE}
             </p>
           )}
-          {checkoutProduct && checkoutStep === 'form' && (
+          {checkoutData && checkoutStep === 'form' && (
             <form onSubmit={processToQRIS} className="space-y-4">
-              <div className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-4">
-                <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/10">{iconFor(checkoutProduct.icon, 20)}</span>
-                <div>
-                  <p className="text-sm font-semibold text-white">{checkoutProduct.title}</p>
-                  <p className="mt-1 text-xs text-zinc-500">{checkoutProduct.duration}</p>
+              {checkoutData.items.length === 1 ? (
+                <div className="flex items-center gap-3 rounded-2xl border border-white/[0.07] bg-white/[0.03] p-4">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-red-500/10">
+                    {iconFor(checkoutData.items[0].icon, 20)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-white">{checkoutData.items[0].title}</p>
+                    <p className="mt-1 text-xs text-zinc-500">
+                      {checkoutData.items[0].duration && `${checkoutData.items[0].duration} · `}
+                      {checkoutData.items[0].quantity > 1 ? `${checkoutData.items[0].quantity}x ` : ''}
+                      {formatPrice(checkoutData.totalAmount)}
+                    </p>
+                  </div>
                 </div>
-              </div>
-              {checkoutGuide && (
+              ) : (
+                <div className="max-h-48 space-y-2 overflow-y-auto rounded-2xl border border-white/[0.07] bg-white/[0.03] p-3">
+                  <p className="px-1 text-[11px] font-bold uppercase tracking-wider text-zinc-500">
+                    Ringkasan Pesanan ({checkoutData.items.length} produk)
+                  </p>
+                  {checkoutData.items.map((item) => (
+                    <div key={item.productId} className="flex items-center justify-between gap-2 px-1 py-1 text-xs">
+                      <span className="truncate text-zinc-200">
+                        {item.title} <span className="text-zinc-500">x{item.quantity}</span>
+                      </span>
+                      <span className="shrink-0 font-semibold text-white">
+                        {formatPrice(item.subtotal ?? item.price * item.quantity)}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between border-t border-white/[0.06] px-1 pt-2 text-xs font-bold">
+                    <span className="text-zinc-400">Total</span>
+                    <span className="font-semibold text-emerald-300">{formatPrice(checkoutData.totalAmount)}</span>
+                  </div>
+                </div>
+              )}
+
+              {checkoutData.guides && checkoutData.guides.length > 0 ? (
+                <section
+                  aria-labelledby="checkout-guide-title"
+                  className="space-y-2.5 rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] p-4"
+                >
+                  <h3 id="checkout-guide-title" className="flex items-center gap-2 text-xs font-bold text-sky-200">
+                    <BookOpen size={15} className="shrink-0" aria-hidden="true" />
+                    Panduan pembelian
+                  </h3>
+                  {checkoutData.guides.map((g, idx) => (
+                    <div key={idx} className="border-t border-sky-500/10 pt-2 first:border-0 first:pt-0">
+                      <p className="font-semibold text-sky-200 text-xs">{g.title}:</p>
+                      <p className="mt-0.5 whitespace-pre-line break-words text-xs leading-relaxed text-sky-50">
+                        {g.guide}
+                      </p>
+                    </div>
+                  ))}
+                </section>
+              ) : checkoutGuide ? (
                 <section
                   aria-labelledby="checkout-guide-title"
                   className="rounded-2xl border border-sky-500/20 bg-sky-500/[0.06] p-4"
@@ -1721,7 +2201,8 @@ function App() {
                     {checkoutGuide}
                   </p>
                 </section>
-              )}
+              ) : null}
+
               <div>
                 <label htmlFor="customer-name" className="text-xs font-semibold text-zinc-300">Nama lengkap *</label>
                 <input id="customer-name" autoFocus required className={inputClass} value={customerName} onChange={(event) => setCustomerName(event.target.value)} placeholder="Nama Anda" />
@@ -1741,7 +2222,7 @@ function App() {
               </Button>
             </form>
           )}
-          {checkoutProduct && checkoutStep === 'qris' && invoice && (
+          {checkoutData && checkoutStep === 'qris' && invoice && (
             <div className="space-y-4 text-center">
               <div className="rounded-xl border border-red-500/20 bg-red-500/[0.07] p-3 text-xs leading-5 text-red-100">
                 Scan QRIS dinamis ini menggunakan GoPay, OVO, DANA, ShopeePay, BCA, Mandiri, atau e-wallet lainnya. Nominal dikunci sesuai total pesanan.
@@ -1774,7 +2255,7 @@ function App() {
               <p className="text-[10px] leading-relaxed text-zinc-500">Status tetap menunggu sampai admin memeriksa pembayaran masuk dan mencocokkan nominal.</p>
             </div>
           )}
-          {checkoutProduct && checkoutStep === 'success' && invoice && (
+          {checkoutData && checkoutStep === 'success' && invoice && (
             <div className="space-y-5">
               <div className="text-center">
                 <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-amber-500/20 bg-amber-500/10 text-amber-300"><CheckCircle2 size={28} /></div>
@@ -1789,13 +2270,13 @@ function App() {
                 as="a"
                 variant="success"
                 className="w-full"
-                href={whatsappUrl(activeWhatsApp, `Halo Admin 2akinoStore, saya sudah melakukan pembayaran via QRIS dan meminta verifikasi manual.\n\nInvoice: ${invoice.code}\nProduk: ${invoice.productTitle}\nNama: ${invoice.customerName}\nTotal yang harus dibayar: ${formatPrice(invoice.amount)}\n\nBerikut saya kirimkan screenshot bukti pembayarannya. Mohon verifikasi pembayaran dan pesanan saya. Terima kasih!`)}
+                href={getWhatsAppConfirmationUrl(invoice)}
                 target="_blank"
                 rel="noreferrer"
               >
                 <Headphones size={18} /> Kirim bukti pembayaran ke WhatsApp
               </Button>
-              <Button variant="secondary" className="w-full" onClick={() => { setCheckoutProduct(null); setActiveTab('store'); }}>
+              <Button variant="secondary" className="w-full" onClick={() => { setCheckoutData(null); setActiveTab('store'); }}>
                 Kembali ke toko
               </Button>
             </div>

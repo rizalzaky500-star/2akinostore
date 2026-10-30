@@ -197,13 +197,17 @@ export async function deleteProduct(id) {
   return result.deletedCount > 0;
 }
 
-export async function decrementStock(id) {
+export async function decrementStock(id, count = 1) {
   if (typeof id !== 'string' || !id || id.length > 100) throw new CatalogError('ID produk tidak valid.');
+  const decrementCount = Number(count);
+  if (!Number.isSafeInteger(decrementCount) || decrementCount < 1) {
+    throw new CatalogError('Jumlah pengurangan stok tidak valid.');
+  }
   const db = await getDb();
   const collection = db.collection(PRODUCT_COLLECTION);
   const finite = await collection.findOneAndUpdate(
-    { _id: id, stock: { $gt: 0 } },
-    { $inc: { stock: -1 } },
+    { _id: id, stock: { $gte: decrementCount } },
+    { $inc: { stock: -decrementCount } },
     { returnDocument: 'after' },
   );
   if (finite) return cleanDocument(finite);
@@ -214,7 +218,7 @@ export async function decrementStock(id) {
   });
   if (unlimited) return cleanDocument(unlimited);
 
-  const exists = await collection.findOne({ _id: id }, { projection: { _id: 1 } });
+  const exists = await collection.findOne({ _id: id }, { projection: { _id: 1, stock: 1 } });
   if (!exists) return null;
   throw new CatalogError('Stok produk habis. Tambahkan stok sebelum memverifikasi pembayaran.', 409);
 }

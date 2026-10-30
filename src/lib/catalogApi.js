@@ -51,8 +51,11 @@ export async function removeCatalogProduct(id) {
   await request(`/api/admin/products/by-id?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-export async function consumeCatalogProductStock(id) {
-  const result = await request(`/api/admin/products/by-id?id=${encodeURIComponent(id)}`, { method: 'POST' });
+export async function consumeCatalogProductStock(id, count = 1) {
+  const result = await request(`/api/admin/products/by-id?id=${encodeURIComponent(id)}`, {
+    method: 'POST',
+    body: { count },
+  });
   return result.product;
 }
 
