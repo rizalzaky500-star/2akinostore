@@ -24,6 +24,7 @@ import {
   Headphones,
   KeyRound,
   LockKeyhole,
+  Menu,
   Minus,
   MonitorPlay,
   Music2,
@@ -41,6 +42,7 @@ import {
   Trash2,
   Tv,
   WalletCards,
+  X,
 } from 'lucide-react';
 import qrisImage from '../DANA.jpeg';
 import { Button } from './components/ui/button.jsx';
@@ -323,7 +325,7 @@ const HeroSection = memo(function HeroSection({ whatsappNumber }) {
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-red-400" />
           Akun digital pilihan, transaksi mudah
         </div>
-        <h1 className="max-w-2xl text-4xl font-black leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-6xl">
+        <h1 className="max-w-2xl text-3xl font-black leading-[1.08] tracking-tight text-white sm:text-5xl lg:text-6xl">
           Hiburan premium,
           <span className="block bg-gradient-to-r from-red-400 via-rose-300 to-white bg-clip-text text-transparent">
             lebih simpel.
@@ -409,6 +411,7 @@ function App() {
   const [settings, setSettings] = useState(readSettings);
   const [activeTab, setActiveTab] = useState('store');
   const [adminTab, setAdminTab] = useState('products');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
@@ -1197,13 +1200,13 @@ function App() {
   return (
     <div className="min-h-screen">
       <header className="sticky top-0 z-40 border-b border-white/[0.07] bg-[#09090b]/85 backdrop-blur-xl">
-        <div className="mx-auto flex h-[72px] max-w-7xl items-center justify-between gap-2 px-3 max-[360px]:gap-1 max-[360px]:px-2 sm:gap-4 sm:px-6">
+        <div className="relative mx-auto flex min-h-[72px] max-w-7xl items-center justify-between gap-2 px-3 py-2 max-[360px]:px-2 sm:h-[72px] sm:gap-4 sm:px-6 sm:py-0">
           <Button
             variant="unstyled"
             size="none"
             type="button"
             onClick={() => setActiveTab('store')}
-            className="flex items-center gap-2 text-left sm:gap-3"
+            className="flex min-w-0 items-center gap-2 text-left sm:gap-3"
             aria-label="Kembali ke toko 2akinoStore"
           >
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-600 text-white shadow-lg shadow-red-950/50 max-[360px]:h-8 max-[360px]:w-8 sm:h-10 sm:w-10">
@@ -1218,7 +1221,7 @@ function App() {
           </Button>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <nav className="min-w-0" aria-label="Navigasi utama">
+            <nav className="hidden sm:block" aria-label="Navigasi utama">
               <RubberSegment
                 items={[
                   { value: 'store', label: 'Toko', icon: <ShoppingBag size={14} /> },
@@ -1251,7 +1254,7 @@ function App() {
               size="none"
               type="button"
               onClick={() => setCartOpen(true)}
-              className="relative flex h-10 items-center gap-2 rounded-xl border border-white/20 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:border-white/40 hover:bg-white/[0.08] hover:text-white"
+              className="relative hidden h-10 items-center gap-2 rounded-xl border border-white/20 bg-white/[0.04] px-3 text-xs font-semibold text-zinc-200 transition hover:border-white/40 hover:bg-white/[0.08] hover:text-white sm:flex"
               aria-label={`Keranjang belanja, ${cartTotals.totalItems} item`}
             >
               <ShoppingCart size={16} />
@@ -1262,7 +1265,78 @@ function App() {
                 </span>
               )}
             </Button>
+            <Button
+              variant="unstyled"
+              size="none"
+              type="button"
+              onClick={() => setMobileMenuOpen((open) => !open)}
+              className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/15 bg-white/[0.04] text-zinc-200 transition hover:bg-white/[0.08] hover:text-white sm:hidden"
+              aria-label={mobileMenuOpen ? 'Tutup menu' : 'Buka menu'}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="mobile-navigation-menu"
+            >
+              {mobileMenuOpen ? <X size={21} /> : <Menu size={21} />}
+            </Button>
           </div>
+          {mobileMenuOpen && (
+            <nav
+              id="mobile-navigation-menu"
+              aria-label="Menu utama"
+              className="absolute left-3 right-3 top-full z-50 mt-2 rounded-2xl border border-white/10 bg-[#111114] p-2 shadow-2xl shadow-black/50 sm:hidden"
+            >
+              <ul className="space-y-1">
+                {[
+                  { value: 'store', label: 'Toko', icon: ShoppingBag },
+                  { value: 'track', label: 'Pesanan', icon: Search },
+                  { value: 'admin', label: 'Admin', icon: Settings2 },
+                ].map(({ value, label, icon: Icon }) => (
+                  <li key={value}>
+                    <Button
+                      variant="unstyled"
+                      size="none"
+                      type="button"
+                      onClick={() => {
+                        setMobileMenuOpen(false);
+                        if (value === 'admin') openAdminAccess();
+                        else setActiveTab(value);
+                      }}
+                      aria-current={activeTab === value ? 'page' : undefined}
+                      className={`flex min-h-12 w-full items-center justify-between rounded-xl px-3 text-sm font-medium ${
+                        activeTab === value
+                          ? 'bg-red-500/10 text-red-200'
+                          : 'text-zinc-200 hover:bg-white/[0.05]'
+                      }`}
+                    >
+                      <span className="inline-flex items-center gap-3">
+                        <Icon size={17} /> {label}
+                      </span>
+                      {activeTab === value && <span className="h-1.5 w-1.5 rounded-full bg-red-400" />}
+                    </Button>
+                  </li>
+                ))}
+                <li className="border-t border-white/[0.07] pt-1">
+                  <Button
+                    variant="unstyled"
+                    size="none"
+                    type="button"
+                    onClick={() => {
+                      setMobileMenuOpen(false);
+                      setCartOpen(true);
+                    }}
+                    className="flex min-h-12 w-full items-center justify-between rounded-xl px-3 text-sm font-medium text-zinc-200 hover:bg-white/[0.05]"
+                    aria-label={`Buka keranjang belanja, ${cartTotals.totalItems} item`}
+                  >
+                    <span className="inline-flex items-center gap-3">
+                      <ShoppingCart size={17} /> Keranjang
+                    </span>
+                    <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-bold text-white">
+                      {cartTotals.totalItems}
+                    </span>
+                  </Button>
+                </li>
+              </ul>
+            </nav>
+          )}
         </div>
       </header>
 
@@ -1696,24 +1770,75 @@ function App() {
 
             {adminTab === 'transactions' && (
               <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-[#111114]">
-                <div className="flex flex-wrap items-center justify-between gap-4 border-b border-white/[0.07] p-5">
+                <div className="flex flex-col gap-3 border-b border-white/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:p-5">
                   <div>
                     <h2 className="text-sm font-semibold text-white">Riwayat transaksi</h2>
                     <p className="mt-1 text-xs text-zinc-500">{transactions.length} transaksi tercatat</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" size="sm" onClick={downloadTransactions}>
+                    <Button variant="secondary" size="sm" className="flex-1 sm:flex-none" onClick={downloadTransactions}>
                       <ArrowDownToLine size={15} /> Unduh CSV
                     </Button>
                     {transactions.length > 0 && (
-                      <Button variant="danger" size="sm" onClick={() => setClearTransactionsOpen(true)}>
+                      <Button variant="danger" size="sm" className="flex-1 sm:flex-none" onClick={() => setClearTransactionsOpen(true)}>
                         <Trash2 size={15} /> Hapus Semua Transaksi
                       </Button>
                     )}
                   </div>
                 </div>
                 {transactions.length ? (
-                  <div className="overflow-x-auto">
+                  <>
+                  <div className="space-y-3 p-3 md:hidden">
+                    {transactions.map((transaction, index) => (
+                      <article key={`${transaction.code}-${index}`} className="rounded-xl border border-white/[0.07] bg-black/20 p-3">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="break-all font-mono text-xs font-semibold text-red-300">{transaction.code}</p>
+                            <p className="mt-1 text-[11px] text-zinc-500">{transaction.date}</p>
+                          </div>
+                          <span className={`shrink-0 rounded-full border px-2 py-1 text-[9px] font-bold ${
+                            transaction.status === 'paid'
+                              ? 'border-emerald-500/20 bg-emerald-500/[0.08] text-emerald-300'
+                              : 'border-amber-500/20 bg-amber-500/[0.08] text-amber-300'
+                          }`}>
+                            {transaction.status === 'paid' ? 'Terverifikasi' : 'Menunggu'}
+                          </span>
+                        </div>
+                        <div className="mt-3 border-t border-white/[0.06] pt-3">
+                          <p className="break-words text-xs font-semibold text-white">{transaction.customerName}</p>
+                          <p className="mt-0.5 break-all text-[11px] text-zinc-500">{transaction.customerWA}</p>
+                          <p className="mt-2 break-words text-xs text-zinc-300">{transaction.productTitle}</p>
+                          {transaction.items && transaction.items.length > 1 && (
+                            <ul className="mt-1 space-y-1 text-[11px] text-zinc-400">
+                              {transaction.items.map((item, idx) => (
+                                <li key={idx} className="flex justify-between gap-2">
+                                  <span className="break-words">{item.productTitle} (x{item.quantity})</span>
+                                  <span className="shrink-0">{formatPrice(item.subtotal ?? item.price * item.quantity)}</span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          <p className="mt-2 text-sm font-bold text-emerald-300">{formatPrice(transaction.amount)}</p>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-white/[0.06] pt-3">
+                          {transaction.status !== 'paid' && (
+                            <Button variant="success" size="sm" className="flex-1" onClick={() => verifyTransaction(transaction.code)}>
+                              <CheckCircle2 size={14} /> Verifikasi
+                            </Button>
+                          )}
+                          <a
+                            className="py-2 text-xs font-semibold text-emerald-300 hover:text-emerald-200"
+                            href={whatsappUrl(transaction.customerWA, `Halo ${transaction.customerName}, terkait pesanan Invoice ${transaction.code} (${transaction.productTitle}).`)}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Chat pembeli
+                          </a>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                  <div className="hidden overflow-x-auto md:block">
                     <table className="w-full min-w-[720px] text-left text-xs">
                       <thead className="bg-white/[0.025] text-[10px] uppercase tracking-wider text-zinc-500">
                         <tr>{['Invoice', 'Tanggal', 'Pembeli', 'Produk', 'Total', 'Status', 'Aksi'].map((label) => <th key={label} className="px-4 py-3 font-semibold">{label}</th>)}</tr>
@@ -1757,6 +1882,7 @@ function App() {
                       </tbody>
                     </table>
                   </div>
+                  </>
                 ) : <p className="p-8 text-center text-sm text-zinc-500">Belum ada transaksi.</p>}
               </section>
             )}
