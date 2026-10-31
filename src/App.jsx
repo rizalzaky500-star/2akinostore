@@ -1945,9 +1945,10 @@ function App() {
         target="_blank"
         rel="noreferrer"
         aria-label="Hubungi admin melalui WhatsApp"
-        className="fixed z-30 h-11 w-11 rounded-full shadow-lg shadow-emerald-950/30 transition-transform hover:scale-105 motion-safe:transition-transform sm:h-12 sm:w-12"
+        className="fixed !left-auto !right-4 z-30 h-11 w-11 rounded-full shadow-lg shadow-emerald-950/30 transition-transform hover:scale-105 motion-safe:transition-transform sm:!right-6 sm:h-12 sm:w-12"
         style={{
           bottom: 'max(clamp(1.25rem, 3vw, 1.5rem), calc(env(safe-area-inset-bottom) + 0.75rem))',
+          left: 'auto',
           right: 'max(clamp(1.25rem, 3vw, 1.5rem), calc(env(safe-area-inset-right) + 0.75rem))',
         }}
       >
