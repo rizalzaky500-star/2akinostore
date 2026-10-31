@@ -1937,6 +1937,23 @@ function App() {
         </div>
       </footer>
 
+      <Button
+        as="a"
+        variant="success"
+        size="icon"
+        href={whatsappUrl(activeWhatsApp, 'Halo Admin 2akinoStore, saya ingin bertanya mengenai pemesanan akun digital.')}
+        target="_blank"
+        rel="noreferrer"
+        aria-label="Hubungi admin melalui WhatsApp"
+        className="fixed z-30 h-11 w-11 rounded-full shadow-lg shadow-emerald-950/30 transition-transform hover:scale-105 motion-safe:transition-transform sm:h-12 sm:w-12"
+        style={{
+          bottom: 'max(clamp(1.25rem, 3vw, 1.5rem), calc(env(safe-area-inset-bottom) + 0.75rem))',
+          right: 'max(clamp(1.25rem, 3vw, 1.5rem), calc(env(safe-area-inset-right) + 0.75rem))',
+        }}
+      >
+        <Headphones size={18} className="sm:h-5 sm:w-5" />
+      </Button>
+
       {activeTab === 'store' && cartTotals.totalItems > 0 && (
         <Button
           type="button"
