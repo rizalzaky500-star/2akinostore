@@ -103,6 +103,7 @@ test('calculateCartTotals calculates item subtotals and overall totals', () => {
   cart = addToCart(cart, mockProductB, 3); // 25000 * 3 = 75000
 
   const totals = calculateCartTotals(cart, [mockProductA, mockProductB]);
+  assert.equal(totals.totalCount, 2);
   assert.equal(totals.totalItems, 5);
   assert.equal(totals.totalAmount, 145000);
   assert.equal(totals.items[0].subtotal, 70000);

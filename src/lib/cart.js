@@ -105,6 +105,7 @@ export function calculateCartTotals(cart, catalogProducts = []) {
   });
 
   return {
+    totalCount: items.length,
     totalItems,
     totalAmount,
     items,

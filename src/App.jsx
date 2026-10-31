@@ -662,28 +662,22 @@ function App() {
   }
 
   const handleAddToCart = useCallback((product) => {
-    setCart((current) => {
-      const result = addToCart(current, product, 1);
-      if (!result.success) {
-        setNotice(result.error);
-        return current;
-      }
+    try {
+      setCart(addToCart(cart, product, 1));
       setNotice(`"${product.title}" ditambahkan ke keranjang.`);
-      return result.cart;
-    });
-  }, []);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Produk tidak dapat ditambahkan ke keranjang.');
+    }
+  }, [cart]);
 
   const handleUpdateCartQuantity = useCallback((productId, quantity) => {
     const product = products.find((p) => p.id === productId);
-    setCart((current) => {
-      const result = updateCartQuantity(current, productId, quantity, product?.stock);
-      if (!result.success) {
-        setNotice(result.error);
-        return current;
-      }
-      return result.cart;
-    });
-  }, [products]);
+    try {
+      setCart(updateCartQuantity(cart, productId, quantity, product?.stock));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Jumlah produk tidak dapat diperbarui.');
+    }
+  }, [cart, products]);
 
   const handleRemoveFromCart = useCallback((productId) => {
     const item = cart.find((i) => i.productId === productId);
