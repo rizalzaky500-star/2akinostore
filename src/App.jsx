@@ -1515,26 +1515,35 @@ function App() {
               </div>
             )}
 
-            <div className="mb-6 flex gap-1 overflow-x-auto border-b border-white/[0.07]">
-              {[
-                { id: 'products', label: 'Daftar produk', icon: Package },
-                { id: 'transactions', label: 'Transaksi', icon: WalletCards },
-                { id: 'settings', label: 'Pengaturan', icon: Settings2 },
-              ].map(({ id, label, icon: Icon }) => (
-                <Button
-                  variant="unstyled"
-                  size="none"
-                  key={id}
-                  type="button"
-                  onClick={() => setAdminTab(id)}
-                  className={`flex shrink-0 items-center gap-2 border-b-2 px-4 py-3 text-xs font-semibold transition ${
-                    adminTab === id ? 'border-red-500 text-white' : 'border-transparent text-zinc-500 hover:text-zinc-200'
-                  }`}
-                >
-                  <Icon size={15} /> {label}
-                </Button>
-              ))}
-            </div>
+            <div className="mb-6 grid items-start gap-5 lg:grid-cols-[200px_minmax(0,1fr)]">
+              <nav
+                aria-label="Menu dashboard admin"
+                className="flex flex-col gap-1 rounded-2xl border border-white/[0.08] bg-[#111114] p-2"
+              >
+                {[
+                  { id: 'products', label: 'Daftar produk', icon: Package },
+                  { id: 'transactions', label: 'Transaksi', icon: WalletCards },
+                  { id: 'settings', label: 'Pengaturan', icon: Settings2 },
+                ].map(({ id, label, icon: Icon }) => (
+                  <Button
+                    variant="unstyled"
+                    size="none"
+                    key={id}
+                    type="button"
+                    onClick={() => setAdminTab(id)}
+                    aria-current={adminTab === id ? 'page' : undefined}
+                    className={`flex min-h-11 w-full items-center justify-start gap-3 rounded-xl border-l-2 px-3 py-2.5 text-left text-xs font-semibold transition ${
+                      adminTab === id
+                        ? 'border-red-500 bg-red-500/[0.08] text-white'
+                        : 'border-transparent text-zinc-400 hover:bg-white/[0.04] hover:text-zinc-100'
+                    }`}
+                  >
+                    <Icon size={16} /> {label}
+                  </Button>
+                ))}
+              </nav>
+
+              <div className="min-w-0">
 
             {adminTab === 'products' && (
               <div className="space-y-5">
@@ -1789,6 +1798,8 @@ function App() {
                 </Button>
               </form>
             )}
+              </div>
+            </div>
           </section>
         )}
       </main>
